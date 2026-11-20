@@ -46,6 +46,20 @@ class Tests(unittest.TestCase):
         self.assertEqual(w.start.astimezone(TZ).hour, 8)   # sunrise ~8:05, 30 min margin
         self.assertEqual(w.end.astimezone(TZ).hour, 14)    # wind turns onshore at 14h
 
+    def test_select_best_one_spot_at_a_time(self):
+        t = datetime(2026, 11, 21, 8, tzinfo=timezone.utc)
+        d = date(2026, 11, 21)
+        spot = lambda i: sc.Spot(i, f"S{i}", "", TZ)
+        win = lambda stars, hs, start, n: sc.Window(
+            day(d, stars), [hour(start + timedelta(hours=k), hs) for k in range(n)])
+        a = (spot(1), win(2, 1.5, t, 4))                       # 2*, ideal swell
+        b = (spot(2), win(3, 2.5, t + timedelta(hours=1), 4))  # 3*, overlaps a -> wins
+        c = (spot(3), win(2, 1.4, t + timedelta(hours=1), 2))  # overlaps b -> dropped
+        e = (spot(4), win(1, 1.5, t + timedelta(hours=6), 2))  # no overlap -> kept
+        f = (spot(5), win(1, 2.8, t + timedelta(hours=6), 2))  # same slot, worse swell
+        best = sc.select_best([a, b, c, e, f])
+        self.assertEqual(sorted(s.id for s, _ in best), [2, 4])
+
     def test_ics_escaping_and_folding(self):
         line = sc.fold("DESCRIPTION:" + "é" * 100)
         for part in line.split("\r\n"):

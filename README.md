@@ -33,8 +33,13 @@ No dependencies; Python 3.9+.
 2. Repo **Settings → Pages → Source: GitHub Actions**.
 3. Run the workflow once (**Actions → Update surf calendar → Run workflow**). It then refreshes every 3 hours.
 4. In Google Calendar: **Other calendars → + → From URL** →
-   `https://<your-user>.github.io/yadusurf-calendar/all.ics` (every spot in one calendar)
-   or `…/<spot-id>.ics` for a single spot.
+   - `https://<your-user>.github.io/yadusurf-calendar/best.ics`: only the best spot at any time
+   - `…/all.ics`: every spot in one calendar
+   - `…/<spot-id>.ics`: a single spot
+
+**Best spot**: when windows from several spots overlap, keep the one with the most stars,
+then the average swell closest to 1.5 m (`IDEAL_SWELL_M`), then the longest; overlapping
+windows from other spots are dropped.
 
 Google re-fetches subscribed calendars on its own schedule (typically every 8–24 h), so the calendar may lag the forecast slightly.
 

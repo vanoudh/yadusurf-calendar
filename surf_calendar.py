@@ -31,6 +31,7 @@ MIN_STARS = 1
 MIN_WIND_QUALITY = 0.6     # yadusurf colours wind >= 0.6 as good
 MIN_WINDOW_HOURS = 2
 MIN_SWELL_M = 0.5
+IDEAL_SWELL_M = 1.5        # "best spot": prefer swell closest to this
 DAWN_MARGIN = timedelta(minutes=30)  # surf from 30 min before sunrise
 
 COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
@@ -252,6 +253,22 @@ class Spot:
     tz: ZoneInfo
 
 
+def best_score(w: Window) -> tuple:
+    """Sort key, lower is better: more stars, then swell closer to IDEAL_SWELL_M, then longer."""
+    hs = sum(h.hs for h in w.hours) / len(w.hours)
+    return (-w.day.stars, round(abs(hs - IDEAL_SWELL_M), 1), -len(w.hours))
+
+
+def select_best(events: list[tuple["Spot", Window]]) -> list[tuple["Spot", Window]]:
+    """Keep only one spot at any given time: greedily take the best-scored window,
+    drop every window overlapping it, repeat."""
+    chosen: list[tuple[Spot, Window]] = []
+    for spot, w in sorted(events, key=lambda e: (best_score(e[1]), e[0].id)):
+        if all(w.end <= c.start or w.start >= c.end for _, c in chosen):
+            chosen.append((spot, w))
+    return chosen
+
+
 def build_ics(events: list[tuple[Spot, Window]], cal_name: str, tz: ZoneInfo,
               generated: datetime) -> str:
     stamp = generated.strftime("%Y%m%dT%H%M%SZ")
@@ -344,6 +361,14 @@ def main() -> int:
         tz = all_events[0][0].tz if all_events else ZoneInfo("Europe/Paris")
         write(path, build_ics(all_events, "Surf - all spots", tz, now))
         print(f"\n{len(all_events)} window(s) across {len(args.spot_id)} spots -> {path}")
+
+        best = select_best(all_events)
+        path = os.path.join(args.output_dir, "best.ics")
+        write(path, build_ics(best, "Surf - best spot", tz, now))
+        print(f"\nBest spot: {len(best)} window(s) -> {path}")
+        for spot, w in sorted(best, key=lambda e: e[1].start):
+            print(f"   {w.start.astimezone(spot.tz):%a %d %H:%M}-{w.end.astimezone(spot.tz):%H:%M}  "
+                  f"{title(w, spot.name)}")
     return 0
 
 
