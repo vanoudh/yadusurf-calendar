@@ -21,7 +21,7 @@ Tune the constants at the top of `surf_calendar.py`.
 ## Run locally
 
 ```sh
-python3 surf_calendar.py               # fetches live data, writes public/surf.ics
+python3 surf_calendar.py               # fetches live data, writes public/1280.ics
 python3 -m unittest                    # tests
 ```
 
@@ -33,8 +33,8 @@ No dependencies; Python 3.9+.
 2. Repo **Settings → Pages → Source: GitHub Actions**.
 3. Run the workflow once (**Actions → Update surf calendar → Run workflow**). It then refreshes every 3 hours.
 4. In Google Calendar: **Other calendars → + → From URL** →
-   `https://<your-user>.github.io/yadusurf-calendar/surf.ics`
+   `https://<your-user>.github.io/yadusurf-calendar/1280.ics`
 
 Google re-fetches subscribed calendars on its own schedule (typically every 8–24 h), so the calendar may lag the forecast slightly.
 
-Other spots: change `--spot-id` in the workflow (the number at the end of the yadusurf URL).
+Other spots: change `--spot-id` in the workflow (the number at the end of the yadusurf URL); the feed is published as `<spot-id>.ics`.

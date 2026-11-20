@@ -25,7 +25,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m unittest -v
-      - run: python surf_calendar.py --spot-id 1280 -o public/surf.ics
+      - run: python surf_calendar.py --spot-id 1280
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public

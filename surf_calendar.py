@@ -281,8 +281,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--spot-id", type=int, default=1280)
     ap.add_argument("--input", help="read API JSON from a file instead of fetching")
-    ap.add_argument("--output", "-o", default="public/surf.ics")
+    ap.add_argument("--output", "-o", help="default: public/<spot-id>.ics")
     args = ap.parse_args()
+    args.output = args.output or f"public/{args.spot_id}.ics"
 
     if args.input:
         with open(args.input, encoding="utf-8") as f:
