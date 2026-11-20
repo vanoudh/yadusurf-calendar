@@ -28,6 +28,7 @@ jobs:
       - run: python surf_calendar.py --spot-id 1280
       - run: python surf_calendar.py --spot-id 1290
       - run: python surf_calendar.py --spot-id 1286
+      - run: python surf_calendar.py --spot-id 1282
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public
