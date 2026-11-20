@@ -293,7 +293,7 @@ def main() -> int:
 
     waw = json.loads(data["WawJson"])
     spot = waw["Spot"]
-    spot_name = spot["Name"]
+    spot_name = spot["Name"].strip()
     tz = ZoneInfo(spot.get("TimeZoneIana") or "Europe/Paris")
     lat, lon = spot["Position"]["Latitude"], spot["Position"]["Longitude"]
     offshore = spot["OffshoreWindHeading"]["AngleRad"]
