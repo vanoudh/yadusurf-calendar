@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -243,8 +244,16 @@ def fold(line: str) -> str:
     return "\r\n ".join(out)
 
 
-def build_ics(windows: list[Window], spot_id: int, spot_name: str, page_url: str,
-              tz: ZoneInfo, generated: datetime) -> str:
+@dataclass
+class Spot:
+    id: int
+    name: str
+    page_url: str
+    tz: ZoneInfo
+
+
+def build_ics(events: list[tuple[Spot, Window]], cal_name: str, tz: ZoneInfo,
+              generated: datetime) -> str:
     stamp = generated.strftime("%Y%m%dT%H%M%SZ")
     lines = [
         "BEGIN:VCALENDAR",
@@ -252,22 +261,22 @@ def build_ics(windows: list[Window], spot_id: int, spot_name: str, page_url: str
         "PRODID:-//surf-calendar//yadusurf//EN",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
-        f"X-WR-CALNAME:Surf {spot_name}",
+        f"X-WR-CALNAME:{ics_escape(cal_name)}",
         f"X-WR-TIMEZONE:{tz.key}",
         "REFRESH-INTERVAL;VALUE=DURATION:PT3H",
         "X-PUBLISHED-TTL:PT3H",
     ]
-    for w in windows:
+    for spot, w in sorted(events, key=lambda e: (e[1].start, e[0].name)):
         lines += [
             "BEGIN:VEVENT",
-            f"UID:{spot_id}-{w.start:%Y%m%dT%H%M}@surf-calendar",
+            f"UID:{spot.id}-{w.start:%Y%m%dT%H%M}@surf-calendar",
             f"DTSTAMP:{stamp}",
             f"DTSTART:{w.start:%Y%m%dT%H%M%SZ}",
             f"DTEND:{w.end:%Y%m%dT%H%M%SZ}",
-            f"SUMMARY:{ics_escape(title(w, spot_name))}",
-            f"DESCRIPTION:{ics_escape(description(w, page_url, tz))}",
-            f"LOCATION:{ics_escape(spot_name)}",
-            f"URL:{page_url}",
+            f"SUMMARY:{ics_escape(title(w, spot.name))}",
+            f"DESCRIPTION:{ics_escape(description(w, spot.page_url, spot.tz))}",
+            f"LOCATION:{ics_escape(spot.name)}",
+            f"URL:{spot.page_url}",
             "TRANSP:TRANSPARENT",
             "END:VEVENT",
         ]
@@ -277,44 +286,64 @@ def build_ics(windows: list[Window], spot_id: int, spot_name: str, page_url: str
 
 # ---------------------------------------------------------------- main
 
+def process_spot(spot_id: int, data: dict) -> tuple[Spot, list[Window]]:
+    waw = json.loads(data["WawJson"])
+    s = waw["Spot"]
+    name = s["Name"].strip()
+    spot = Spot(
+        id=spot_id,
+        name=name,
+        page_url=PAGE_URL.format(slug=name.replace(" ", "-"), spot_id=spot_id),
+        tz=ZoneInfo(s.get("TimeZoneIana") or "Europe/Paris"),
+    )
+    days = parse_days(data["SurfometreInfosXml"])
+    windows = find_windows(parse_hours(waw), days, spot.tz,
+                           s["Position"]["Latitude"], s["Position"]["Longitude"],
+                           s["OffshoreWindHeading"]["AngleRad"])
+    return spot, windows
+
+
+def write(path: str, content: str) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(content)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--spot-id", type=int, default=1280)
-    ap.add_argument("--input", help="read API JSON from a file instead of fetching")
-    ap.add_argument("--output", "-o", help="default: public/<spot-id>.ics")
+    ap.add_argument("--spot-id", type=int, nargs="+", default=[1280],
+                    help="one or more yadusurf spot ids")
+    ap.add_argument("--input", help="read API JSON from a file instead of fetching (single spot only)")
+    ap.add_argument("--output-dir", "-o", default="public",
+                    help="writes <spot-id>.ics per spot, plus all.ics when several spots are given")
     args = ap.parse_args()
-    args.output = args.output or f"public/{args.spot_id}.ics"
+    if args.input and len(args.spot_id) > 1:
+        ap.error("--input works with a single --spot-id")
 
-    if args.input:
-        with open(args.input, encoding="utf-8") as f:
-            data = json.load(f)
-    else:
-        data = fetch(args.spot_id)
+    now = datetime.now(timezone.utc)
+    all_events: list[tuple[Spot, Window]] = []
+    for spot_id in args.spot_id:
+        if args.input:
+            with open(args.input, encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            data = fetch(spot_id)
+        spot, windows = process_spot(spot_id, data)
+        events = [(spot, w) for w in windows]
+        all_events += events
+        path = os.path.join(args.output_dir, f"{spot_id}.ics")
+        write(path, build_ics(events, f"Surf {spot.name}", spot.tz, now))
 
-    waw = json.loads(data["WawJson"])
-    spot = waw["Spot"]
-    spot_name = spot["Name"].strip()
-    tz = ZoneInfo(spot.get("TimeZoneIana") or "Europe/Paris")
-    lat, lon = spot["Position"]["Latitude"], spot["Position"]["Longitude"]
-    offshore = spot["OffshoreWindHeading"]["AngleRad"]
-    page_url = PAGE_URL.format(slug=spot_name.replace(" ", "-"), spot_id=args.spot_id)
+        print(f"== {spot.name} ({spot_id}): {len(windows)} window(s) -> {path}")
+        for w in windows:
+            print(f"   {w.start.astimezone(spot.tz):%a %d %H:%M}-{w.end.astimezone(spot.tz):%H:%M}  "
+                  f"{title(w, spot.name)}")
 
-    days = parse_days(data["SurfometreInfosXml"])
-    hours = parse_hours(waw)
-    windows = find_windows(hours, days, tz, lat, lon, offshore)
-
-    ics = build_ics(windows, args.spot_id, spot_name, page_url, tz, datetime.now(timezone.utc))
-    import os
-    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
-    with open(args.output, "w", encoding="utf-8", newline="") as f:
-        f.write(ics)
-
-    for d in sorted(days.values(), key=lambda d: d.day):
-        print(f"{d.day}  {'*' * d.stars:<3}  {d.comment.splitlines()[0] if d.comment else ''}")
-    print()
-    for w in windows:
-        print(f"{w.start.astimezone(tz):%a %d %H:%M}-{w.end.astimezone(tz):%H:%M}  {title(w, spot_name)}")
-    print(f"\n{len(windows)} window(s) -> {args.output}")
+    if len(args.spot_id) > 1:
+        path = os.path.join(args.output_dir, "all.ics")
+        tz = all_events[0][0].tz if all_events else ZoneInfo("Europe/Paris")
+        write(path, build_ics(all_events, "Surf - all spots", tz, now))
+        print(f"\n{len(all_events)} window(s) across {len(args.spot_id)} spots -> {path}")
     return 0
 
 
