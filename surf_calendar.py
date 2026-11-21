@@ -17,8 +17,10 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 import time
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -35,6 +37,12 @@ MIN_SWELL_M = 0.5
 IDEAL_SWELL_M = 1.5        # "best spot": prefer swell closest to this
 DELAY_BETWEEN_SPOTS_S = 5  # pause between API calls, to be gentle with the site
 DAWN_MARGIN = timedelta(minutes=30)  # surf from 30 min before sunrise
+
+# Tide heights are estimated from yadusurf's high/low times + coefficients (port of Le Boucau),
+# with the French "unité de hauteur" method: height = mean level ± unit * coef / 100,
+# heights above chart datum (zéro hydrographique). Approximate values for Le Boucau.
+TIDE_MEAN_LEVEL_M = 2.5
+TIDE_UNIT_M = 2.1
 
 COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 BEAUFORT_MS = [0.3, 1.6, 3.4, 5.5, 8.0, 10.8, 13.9, 17.2, 20.8, 24.5, 28.5, 32.7]
@@ -85,23 +93,27 @@ class Window:
 
 # ---------------------------------------------------------------- fetch/parse
 
-def fetch(spot_id: int, attempts: int = 2) -> dict:
-    """Fetch with retries. If every attempt fails the exception propagates, the
-    workflow fails before deploying, and the previously published calendars stay live."""
+def get(url: str, attempts: int = 2) -> str:
+    """GET with one gentle retry. If every attempt fails the exception propagates."""
     req = urllib.request.Request(
-        API_URL.format(spot_id=spot_id),
+        urllib.parse.quote(url, safe=":/?=&"),
         headers={"User-Agent": "Mozilla/5.0 (surf-calendar)"},
     )
     for attempt in range(1, attempts + 1):
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
-                return json.load(resp)
-        except (OSError, ValueError) as e:  # URLError, timeouts, bad JSON
+                return resp.read().decode("utf-8")
+        except OSError as e:  # URLError, timeouts
             if attempt == attempts:
                 raise
-            print(f"   spot {spot_id}: attempt {attempt} failed ({e}), retrying...", file=sys.stderr)
+            print(f"   {url}: attempt {attempt} failed ({e}), retrying...", file=sys.stderr)
             time.sleep(30)
     raise AssertionError("unreachable")
+
+
+def fetch(spot_id: int) -> dict:
+    """If this fails the workflow fails before deploying, so the last good calendars stay live."""
+    return json.loads(get(API_URL.format(spot_id=spot_id)))
 
 
 def parse_days(xml_text: str) -> dict[date, DayInfo]:
@@ -133,6 +145,50 @@ def parse_hours(waw: dict) -> list[Hour]:
             ))
     hours.sort(key=lambda h: h.time)
     return hours
+
+
+# ---------------------------------------------------------------- tides
+
+@dataclass
+class TideExtreme:
+    time: datetime   # UTC
+    high: bool
+    height: float    # m above chart datum (estimated)
+
+
+def parse_tides(html: str, first_day: date, tz: ZoneInfo) -> list[TideExtreme]:
+    """Parse the spot page's `daysTides[i] = { BM1:"06h 30", HM1:"00h 45", ..., Coef:"46", Coef2:"51" }`.
+    daysTides[0] is today. Coef applies to morning tides, Coef2 to afternoon ones."""
+    extremes = []
+    for m in re.finditer(r"daysTides\[(\d+)\]\s*=\s*\{([^}]*)\}", html):
+        d = first_day + timedelta(days=int(m.group(1)))
+        fields = dict(re.findall(r'(\w+)\s*:\s*"([^"]*)"', m.group(2)))
+        for key, high in (("HM1", True), ("BM1", False), ("HM2", True), ("BM2", False)):
+            t = re.fullmatch(r"\s*(\d{1,2})h\s*(\d{2})\s*", fields.get(key, ""))
+            if not t:
+                continue
+            local = datetime(d.year, d.month, d.day, int(t[1]), int(t[2]), tzinfo=tz)
+            try:
+                coef = float(fields.get("Coef" if local.hour < 12 else "Coef2") or fields["Coef"])
+            except (KeyError, ValueError):
+                continue
+            amplitude = TIDE_UNIT_M * coef / 100
+            extremes.append(TideExtreme(
+                local.astimezone(timezone.utc), high,
+                TIDE_MEAN_LEVEL_M + (amplitude if high else -amplitude)))
+    extremes.sort(key=lambda e: e.time)
+    return extremes
+
+
+def tide_height(extremes: list[TideExtreme], t: datetime) -> float | None:
+    """Cosine interpolation between the surrounding high and low tide; None if unknown."""
+    for a, b in zip(extremes, extremes[1:]):
+        if a.time <= t <= b.time:
+            if a.high == b.high:
+                return None
+            frac = (t - a.time) / (b.time - a.time)
+            return a.height + (b.height - a.height) * (1 - math.cos(math.pi * frac)) / 2
+    return None
 
 
 # ---------------------------------------------------------------- surf logic
@@ -226,7 +282,8 @@ def title(w: Window, spot_name: str) -> str:
     return f"{w.day.stars}* {spot_name} {fmt_num(hs)}m {round(tp)}s {compass_from(w.hours)}"
 
 
-def description(w: Window, page_url: str, tz: ZoneInfo) -> str:
+def description(w: Window, page_url: str, tz: ZoneInfo,
+                tides: list[TideExtreme] | None = None) -> str:
     lines = [w.day.comment, ""]
     lines.append(f"Coef marée: {w.day.coefficient} · Eau: {w.day.water_temp}°C")
     lines.append("")
@@ -234,6 +291,7 @@ def description(w: Window, page_url: str, tz: ZoneInfo) -> str:
         lines.append(
             f"{h.time.astimezone(tz):%H:%M}  {fmt_num(h.hs)}m {round(h.tp)}s  "
             f"vent {compass_from([h])} {round(h.wind_speed * 3.6)} km/h"
+            + (f"  T{th:.1f}" if (th := tide_height(tides or [], h.time)) is not None else "")
         )
     lines += ["", page_url]
     return "\n".join(lines)
@@ -282,7 +340,7 @@ def select_best(events: list[tuple["Spot", Window]]) -> list[tuple["Spot", Windo
 
 
 def build_ics(events: list[tuple[Spot, Window]], cal_name: str, tz: ZoneInfo,
-              generated: datetime) -> str:
+              generated: datetime, tides: list[TideExtreme] | None = None) -> str:
     stamp = generated.strftime("%Y%m%dT%H%M%SZ")
     lines = [
         "BEGIN:VCALENDAR",
@@ -303,7 +361,7 @@ def build_ics(events: list[tuple[Spot, Window]], cal_name: str, tz: ZoneInfo,
             f"DTSTART:{w.start:%Y%m%dT%H%M%SZ}",
             f"DTEND:{w.end:%Y%m%dT%H%M%SZ}",
             f"SUMMARY:{ics_escape(title(w, spot.name))}",
-            f"DESCRIPTION:{ics_escape(description(w, spot.page_url, spot.tz))}",
+            f"DESCRIPTION:{ics_escape(description(w, spot.page_url, spot.tz, tides))}",
             f"LOCATION:{ics_escape(spot.name)}",
             f"URL:{spot.page_url}",
             "TRANSP:TRANSPARENT",
@@ -343,6 +401,7 @@ def main() -> int:
     ap.add_argument("--spot-id", type=int, nargs="+", default=[1280],
                     help="one or more yadusurf spot ids")
     ap.add_argument("--input", help="read API JSON from a file instead of fetching (single spot only)")
+    ap.add_argument("--tide-html", help="read the tide table from a saved spot page instead of fetching")
     ap.add_argument("--output-dir", "-o", default="public",
                     help="writes <spot-id>.ics per spot, plus all.ics and best.ics when several spots are given")
     args = ap.parse_args()
@@ -350,7 +409,7 @@ def main() -> int:
         ap.error("--input works with a single --spot-id")
 
     now = datetime.now(timezone.utc)
-    all_events: list[tuple[Spot, Window]] = []
+    results: list[tuple[Spot, list[Window]]] = []
     for i, spot_id in enumerate(args.spot_id):
         if args.input:
             with open(args.input, encoding="utf-8") as f:
@@ -359,26 +418,46 @@ def main() -> int:
             if i:
                 time.sleep(DELAY_BETWEEN_SPOTS_S)  # be gentle with yadusurf.com
             data = fetch(spot_id)
-        spot, windows = process_spot(spot_id, data)
+        results.append(process_spot(spot_id, data))
+
+    # Tide table: one page fetch for all spots (they share the port of Le Boucau).
+    # Optional: if it fails, calendars are still published, just without tide heights.
+    tz = results[0][0].tz
+    html = ""
+    if args.tide_html:
+        with open(args.tide_html, encoding="utf-8") as f:
+            html = f.read()
+    elif not args.input:
+        time.sleep(DELAY_BETWEEN_SPOTS_S)
+        try:
+            html = get(results[0][0].page_url)
+        except OSError as e:
+            print(f"warning: tide page unavailable ({e}), no tide heights", file=sys.stderr)
+    tides = parse_tides(html, now.astimezone(tz).date(), tz) if html else []
+    if html and not tides:
+        print("warning: no tide table found on the page", file=sys.stderr)
+    print(f"Tides: {len(tides)} high/low tides parsed")
+
+    all_events: list[tuple[Spot, Window]] = []
+    for spot, windows in results:
         events = [(spot, w) for w in windows]
         all_events += events
-        path = os.path.join(args.output_dir, f"{spot_id}.ics")
-        write(path, build_ics(events, f"Surf {spot.name}", spot.tz, now))
+        path = os.path.join(args.output_dir, f"{spot.id}.ics")
+        write(path, build_ics(events, f"Surf {spot.name}", spot.tz, now, tides))
 
-        print(f"== {spot.name} ({spot_id}): {len(windows)} window(s) -> {path}")
+        print(f"== {spot.name} ({spot.id}): {len(windows)} window(s) -> {path}")
         for w in windows:
             print(f"   {w.start.astimezone(spot.tz):%a %d %H:%M}-{w.end.astimezone(spot.tz):%H:%M}  "
                   f"{title(w, spot.name)}")
 
     if len(args.spot_id) > 1:
-        tz = all_events[0][0].tz if all_events else ZoneInfo("Europe/Paris")
         path = os.path.join(args.output_dir, "all.ics")
-        write(path, build_ics(all_events, "Surf - all spots", tz, now))
+        write(path, build_ics(all_events, "Surf - all spots", tz, now, tides))
         print(f"\n{len(all_events)} window(s) across {len(args.spot_id)} spots -> {path}")
 
         best = select_best(all_events)
         path = os.path.join(args.output_dir, "best.ics")
-        write(path, build_ics(best, "Surf - best spot", tz, now))
+        write(path, build_ics(best, "Surf - best spot", tz, now, tides))
         print(f"\nBest spot: {len(best)} window(s) -> {path}")
         for spot, w in sorted(best, key=lambda e: e[1].start):
             print(f"   {w.start.astimezone(spot.tz):%a %d %H:%M}-{w.end.astimezone(spot.tz):%H:%M}  "

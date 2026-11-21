@@ -60,6 +60,23 @@ class Tests(unittest.TestCase):
         best = sc.select_best([a, b, c, e, f])
         self.assertEqual(sorted(s.id for s, _ in best), [2, 4])
 
+    def test_tides(self):
+        html = ('var daysTides = new Array();\n'
+                'daysTides[0] = { BM1:"06h 30", HM1:"00h 45", BM2:"19h 04", HM2:"13h 06", Coef:"46", Coef2:"51" };\n'
+                'daysTides[1] = { BM1:"07h 23", HM1:"01h 34", BM2:"-", HM2:"13h 54", Coef:"57", Coef2:"64" };')
+        ext = sc.parse_tides(html, date(2026, 11, 20), TZ)
+        self.assertEqual(len(ext), 7)  # "-" skipped
+        self.assertEqual([e.high for e in ext[:4]], [True, False, True, False])
+        # 13:06 Paris = 12:06 UTC, afternoon coef 51
+        self.assertEqual(ext[2].time, datetime(2026, 11, 20, 12, 6, tzinfo=timezone.utc))
+        self.assertAlmostEqual(ext[2].height, sc.TIDE_MEAN_LEVEL_M + sc.TIDE_UNIT_M * 0.51)
+        # exactly at low tide -> low height; halfway -> mean of high and low
+        self.assertAlmostEqual(sc.tide_height(ext, ext[1].time), ext[1].height)
+        mid = ext[1].time + (ext[2].time - ext[1].time) / 2
+        self.assertAlmostEqual(sc.tide_height(ext, mid), (ext[1].height + ext[2].height) / 2)
+        self.assertIsNone(sc.tide_height(ext, ext[0].time - timedelta(hours=1)))
+        self.assertIsNone(sc.tide_height(ext, ext[-1].time + timedelta(hours=1)))
+
     def test_ics_escaping_and_folding(self):
         line = sc.fold("DESCRIPTION:" + "é" * 100)
         for part in line.split("\r\n"):
