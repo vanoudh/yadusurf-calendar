@@ -77,6 +77,20 @@ class Tests(unittest.TestCase):
         self.assertIsNone(sc.tide_height(ext, ext[0].time - timedelta(hours=1)))
         self.assertIsNone(sc.tide_height(ext, ext[-1].time + timedelta(hours=1)))
 
+    def test_hour_line(self):
+        html = 'daysTides[0] = { BM1:"06h 30", HM1:"00h 45", BM2:"19h 04", HM2:"13h 06", Coef:"46", Coef2:"51" };'
+        tides = sc.parse_tides(html, date(2026, 11, 20), TZ)
+        spot = sc.Spot(1280, "Le Penon", "", TZ, OFFSHORE)
+        rising = datetime(2026, 11, 20, 9, tzinfo=timezone.utc)    # 10:00 Paris, between BM 06:30 and PM 13:06
+        falling = datetime(2026, 11, 20, 15, tzinfo=timezone.utc)  # 16:00 Paris, between PM 13:06 and BM 19:04
+        h = hour(rising, hs=1.5, tp=10.6, from_deg=90, speed=2.5)  # east wind = offshore at Le Penon
+        line = sc.hour_line(h, spot, tides)
+        self.assertRegex(line, r"^10:00 1,5m 11s off 9km/h ↑\d,\dm$")
+        self.assertIn(" on ", sc.hour_line(hour(falling, from_deg=270), spot, tides))
+        self.assertIn(" side ", sc.hour_line(hour(falling, from_deg=0), spot, tides))
+        self.assertRegex(sc.hour_line(hour(falling), spot, tides), r"↓\d,\dm$")
+        self.assertRegex(sc.hour_line(h, spot, []), r"km/h$")  # no tide data -> no tide field
+
     def test_ics_escaping_and_folding(self):
         line = sc.fold("DESCRIPTION:" + "é" * 100)
         for part in line.split("\r\n"):

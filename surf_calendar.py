@@ -197,15 +197,20 @@ def beaufort(speed_ms: float) -> int:
     return sum(speed_ms >= t for t in BEAUFORT_MS)
 
 
+def wind_type(h: Hour, offshore_heading_rad: float) -> str:
+    """'off', 'side' or 'on' - port of yadusurf.com VentCalculateur.GetWindOffShore."""
+    c = math.cos(h.wind_toward_rad - offshore_heading_rad)
+    return "off" if c > 0.2 else "on" if c < -0.2 else "side"
+
+
 def wind_quality(h: Hour, offshore_heading_rad: float) -> float:
     """Port of yadusurf.com VentCalculateur.GetWindQuality."""
     bft = beaufort(h.wind_speed)
-    c = math.cos(h.wind_toward_rad - offshore_heading_rad)
-    if c > 0.2:   # offshore
+    kind = wind_type(h, offshore_heading_rad)
+    if kind == "off":
         return 1.0 if bft > 3 else 0.95
-    if c < -0.2:  # onshore
+    if kind == "on":
         return 0.7 if bft < 1 else 0.6 if bft < 2 else 0.5 if bft < 3 else 0.2 if bft < 4 else 0.0
-    # sideshore
     return 0.8 if bft < 2 else 0.6 if bft < 3 else 0.4 if bft < 4 else 0.2
 
 
@@ -282,18 +287,35 @@ def title(w: Window, spot_name: str) -> str:
     return f"{w.day.stars}* {spot_name} {fmt_num(hs)}m {round(tp)}s {compass_from(w.hours)}"
 
 
-def description(w: Window, page_url: str, tz: ZoneInfo,
-                tides: list[TideExtreme] | None = None) -> str:
+def tide_text(tides: list[TideExtreme], t: datetime) -> str:
+    """e.g. '↑3,9m' (rising) / '↓3,7m' (falling); '' when unknown."""
+    now = tide_height(tides, t)
+    later = tide_height(tides, t + timedelta(minutes=10))
+    if now is None:
+        return ""
+    arrow = "" if later is None else "↑" if later > now else "↓"
+    return f"{arrow}{now:.1f}m".replace(".", ",")
+
+
+def hour_line(h: Hour, spot: Spot, tides: list[TideExtreme]) -> str:
+    """e.g. '14:00 1,5m 11s side 9km/h ↑3,9m'"""
+    parts = [
+        f"{h.time.astimezone(spot.tz):%H:%M}",
+        f"{fmt_num(h.hs)}m",
+        f"{round(h.tp)}s",
+        wind_type(h, spot.offshore_rad),
+        f"{round(h.wind_speed * 3.6)}km/h",
+        tide_text(tides, h.time),
+    ]
+    return " ".join(p for p in parts if p)
+
+
+def description(w: Window, spot: Spot, tides: list[TideExtreme] | None = None) -> str:
     lines = [w.day.comment, ""]
     lines.append(f"Coef marée: {w.day.coefficient} · Eau: {w.day.water_temp}°C")
     lines.append("")
-    for h in w.hours:
-        lines.append(
-            f"{h.time.astimezone(tz):%H:%M}  {fmt_num(h.hs)}m {round(h.tp)}s  "
-            f"vent {compass_from([h])} {round(h.wind_speed * 3.6)} km/h"
-            + (f"  T{th:.1f}" if (th := tide_height(tides or [], h.time)) is not None else "")
-        )
-    lines += ["", page_url]
+    lines += [hour_line(h, spot, tides or []) for h in w.hours]
+    lines += ["", spot.page_url]
     return "\n".join(lines)
 
 
@@ -321,6 +343,7 @@ class Spot:
     name: str
     page_url: str
     tz: ZoneInfo
+    offshore_rad: float = 0.0  # compass bearing an offshore wind blows toward
 
 
 def best_score(w: Window) -> tuple:
@@ -361,7 +384,7 @@ def build_ics(events: list[tuple[Spot, Window]], cal_name: str, tz: ZoneInfo,
             f"DTSTART:{w.start:%Y%m%dT%H%M%SZ}",
             f"DTEND:{w.end:%Y%m%dT%H%M%SZ}",
             f"SUMMARY:{ics_escape(title(w, spot.name))}",
-            f"DESCRIPTION:{ics_escape(description(w, spot.page_url, spot.tz, tides))}",
+            f"DESCRIPTION:{ics_escape(description(w, spot, tides))}",
             f"LOCATION:{ics_escape(spot.name)}",
             f"URL:{spot.page_url}",
             "TRANSP:TRANSPARENT",
@@ -382,6 +405,7 @@ def process_spot(spot_id: int, data: dict) -> tuple[Spot, list[Window]]:
         name=name,
         page_url=PAGE_URL.format(slug=name.replace(" ", "-"), spot_id=spot_id),
         tz=ZoneInfo(s.get("TimeZoneIana") or "Europe/Paris"),
+        offshore_rad=s["OffshoreWindHeading"]["AngleRad"],
     )
     days = parse_days(data["SurfometreInfosXml"])
     windows = find_windows(parse_hours(waw), days, spot.tz,
