@@ -1,6 +1,6 @@
 # yadusurf-calendar
 
-Turns the [YaDuSurf forecast for Le Penon](https://www.yadusurf.com/Meteo-Surf-Report/Le-Penon/1280)
+Turns a [YaDuSurf forecast](https://www.yadusurf.com/Meteo-Surf-Report/Le-Penon/1280)
 into a subscribable Google Calendar feed of **good surf windows**.
 
 Events look like `3* Le Penon 1,5m 10s E`:
