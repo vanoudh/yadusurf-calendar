@@ -21,7 +21,7 @@ Tune the constants at the top of `surf_calendar.py`.
 ## Run locally
 
 ```sh
-python3 surf_calendar.py --spot-id 1280 1282   # writes public/1280.ics, public/1282.ics, public/all.ics
+python3 surf_calendar.py --spot-id 1280 1282   # writes public/1280.ics, public/1282.ics, public/all.ics, public/best.ics
 python3 -m unittest                    # tests
 ```
 
@@ -31,10 +31,10 @@ No dependencies; Python 3.9+.
 
 1. Push this repo to GitHub (it must be public for free GitHub Pages).
 2. Repo **Settings → Pages → Source: GitHub Actions**.
-3. Run the workflow once (**Actions → Update surf calendar → Run workflow**). It then refreshes every 3 hours.
+3. Run the workflow once (**Actions → Update surf calendar → Run workflow**). It then refreshes 3 times a day (one API call per spot, 5 s apart, to stay gentle with yadusurf.com).
 4. In Google Calendar: **Other calendars → + → From URL** →
    - `https://<your-user>.github.io/yadusurf-calendar/best.ics`: only the best spot at any time
-   - `…/all.ics`: every spot in one calendar
+   - `…/all.ics`: every spot in one calendar (best viewed one day at a time)
    - `…/<spot-id>.ics`: a single spot
 
 **Best spot**: when windows from several spots overlap, keep the one with the most stars,
@@ -44,4 +44,4 @@ windows from other spots are dropped.
 Google re-fetches subscribed calendars on its own schedule (typically every 8–24 h), so the calendar may lag the forecast slightly.
 
 Spots: edit the `--spot-id` list in the workflow (the number at the end of the yadusurf URL).
-Currently: 1280 Le Penon, 1282 Les Estagnots, 1283 Les Culs Nus, 1286 La Sud, 1290 Le Santocha.
+Currently: 1280 Le Penon, 1282 Les Estagnots, 1283 Les Culs Nus, 1286 La Sud, 1289 Le Prévent, 1290 Le Santocha.

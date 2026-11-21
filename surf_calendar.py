@@ -18,6 +18,7 @@ import json
 import math
 import os
 import sys
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ MIN_WIND_QUALITY = 0.6     # yadusurf colours wind >= 0.6 as good
 MIN_WINDOW_HOURS = 2
 MIN_SWELL_M = 0.5
 IDEAL_SWELL_M = 1.5        # "best spot": prefer swell closest to this
+DELAY_BETWEEN_SPOTS_S = 5  # pause between API calls, to be gentle with the site
 DAWN_MARGIN = timedelta(minutes=30)  # surf from 30 min before sunrise
 
 COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
@@ -83,13 +85,23 @@ class Window:
 
 # ---------------------------------------------------------------- fetch/parse
 
-def fetch(spot_id: int) -> dict:
+def fetch(spot_id: int, attempts: int = 2) -> dict:
+    """Fetch with retries. If every attempt fails the exception propagates, the
+    workflow fails before deploying, and the previously published calendars stay live."""
     req = urllib.request.Request(
         API_URL.format(spot_id=spot_id),
         headers={"User-Agent": "Mozilla/5.0 (surf-calendar)"},
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.load(resp)
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return json.load(resp)
+        except (OSError, ValueError) as e:  # URLError, timeouts, bad JSON
+            if attempt == attempts:
+                raise
+            print(f"   spot {spot_id}: attempt {attempt} failed ({e}), retrying...", file=sys.stderr)
+            time.sleep(30)
+    raise AssertionError("unreachable")
 
 
 def parse_days(xml_text: str) -> dict[date, DayInfo]:
@@ -280,8 +292,8 @@ def build_ics(events: list[tuple[Spot, Window]], cal_name: str, tz: ZoneInfo,
         "METHOD:PUBLISH",
         f"X-WR-CALNAME:{ics_escape(cal_name)}",
         f"X-WR-TIMEZONE:{tz.key}",
-        "REFRESH-INTERVAL;VALUE=DURATION:PT3H",
-        "X-PUBLISHED-TTL:PT3H",
+        "REFRESH-INTERVAL;VALUE=DURATION:PT6H",
+        "X-PUBLISHED-TTL:PT6H",
     ]
     for spot, w in sorted(events, key=lambda e: (e[1].start, e[0].name)):
         lines += [
@@ -332,18 +344,20 @@ def main() -> int:
                     help="one or more yadusurf spot ids")
     ap.add_argument("--input", help="read API JSON from a file instead of fetching (single spot only)")
     ap.add_argument("--output-dir", "-o", default="public",
-                    help="writes <spot-id>.ics per spot, plus all.ics when several spots are given")
+                    help="writes <spot-id>.ics per spot, plus all.ics and best.ics when several spots are given")
     args = ap.parse_args()
     if args.input and len(args.spot_id) > 1:
         ap.error("--input works with a single --spot-id")
 
     now = datetime.now(timezone.utc)
     all_events: list[tuple[Spot, Window]] = []
-    for spot_id in args.spot_id:
+    for i, spot_id in enumerate(args.spot_id):
         if args.input:
             with open(args.input, encoding="utf-8") as f:
                 data = json.load(f)
         else:
+            if i:
+                time.sleep(DELAY_BETWEEN_SPOTS_S)  # be gentle with yadusurf.com
             data = fetch(spot_id)
         spot, windows = process_spot(spot_id, data)
         events = [(spot, w) for w in windows]
@@ -357,8 +371,8 @@ def main() -> int:
                   f"{title(w, spot.name)}")
 
     if len(args.spot_id) > 1:
-        path = os.path.join(args.output_dir, "all.ics")
         tz = all_events[0][0].tz if all_events else ZoneInfo("Europe/Paris")
+        path = os.path.join(args.output_dir, "all.ics")
         write(path, build_ics(all_events, "Surf - all spots", tz, now))
         print(f"\n{len(all_events)} window(s) across {len(args.spot_id)} spots -> {path}")
 
