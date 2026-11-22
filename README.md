@@ -24,6 +24,9 @@ and interpolated between tides with a cosine curve. Expect ±0.2–0.3 m. The ti
   (offshore always fine; side-shore OK up to 2 Bft; onshore only when nearly calm)
 - at least 2 consecutive hours
 
+Beyond ~5 days YaDuSurf only has one data point every 3 hours (long-range model); the missing hours are
+filled by linear interpolation, so later days get windows and hourly lines too (with interpolated values).
+
 Tune the constants at the top of `surf_calendar.py`.
 
 ## Run locally

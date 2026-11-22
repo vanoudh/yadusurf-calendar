@@ -106,6 +106,16 @@ class Tests(unittest.TestCase):
         self.assertEqual(set(prefs), {1280, 1282, 1283, 1284, 1285, 1286, 1289, 1290, 1291})
         self.assertEqual(prefs[1284]["small"], (0.5, 1.8))
 
+    def test_fill_hourly_three_hourly_data(self):
+        t = datetime(2026, 11, 28, 6, tzinfo=timezone.utc)
+        pts = [sc.Hour(t + timedelta(hours=3 * k), 1.0 + 0.3 * k, 12, 3.0, 0.0) for k in range(4)]
+        filled = sc.fill_hourly(pts)
+        self.assertEqual(len(filled), 10)  # 06..15 hourly
+        self.assertTrue(all(b.time - a.time == timedelta(hours=1) for a, b in zip(filled, filled[1:])))
+        self.assertAlmostEqual(filled[1].hs, 1.1)
+        # a long hole (> 6 h) is not filled
+        self.assertEqual(len(sc.fill_hourly([pts[0], sc.Hour(t + timedelta(hours=12), 1, 12, 0, 0)])), 2)
+
     def test_ics_escaping_and_folding(self):
         line = sc.fold("DESCRIPTION:" + "é" * 100)
         for part in line.split("\r\n"):

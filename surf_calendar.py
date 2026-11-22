@@ -147,7 +147,29 @@ def parse_hours(waw: dict) -> list[Hour]:
                 wind_u=we["VentU"], wind_v=we["VentV"],
             ))
     hours.sort(key=lambda h: h.time)
-    return hours
+    return fill_hourly(hours)
+
+
+def fill_hourly(hours: list[Hour], max_gap_h: int = 6) -> list[Hour]:
+    """Beyond ~5 days yadusurf switches to 3-hourly data (long-range model). Fill the missing
+    hours by linear interpolation so windows and hourly lines work the same on every day.
+    Gaps longer than max_gap_h are left as-is (no invention over long holes)."""
+    out: list[Hour] = []
+    for a, b in zip(hours, hours[1:]):
+        out.append(a)
+        gap = int((b.time - a.time).total_seconds() // 3600)
+        if 1 < gap <= max_gap_h:
+            for k in range(1, gap):
+                f = k / gap
+                out.append(Hour(
+                    time=a.time + timedelta(hours=k),
+                    hs=a.hs + (b.hs - a.hs) * f, tp=a.tp + (b.tp - a.tp) * f,
+                    wind_u=a.wind_u + (b.wind_u - a.wind_u) * f,
+                    wind_v=a.wind_v + (b.wind_v - a.wind_v) * f,
+                ))
+    if hours:
+        out.append(hours[-1])
+    return out
 
 
 # ---------------------------------------------------------------- tides
