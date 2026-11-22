@@ -116,6 +116,24 @@ class Tests(unittest.TestCase):
         # a long hole (> 6 h) is not filled
         self.assertEqual(len(sc.fill_hourly([pts[0], sc.Hour(t + timedelta(hours=12), 1, 12, 0, 0)])), 2)
 
+    def test_hour_score(self):
+        t = datetime(2026, 11, 28, 10, tzinfo=timezone.utc)
+        ideal = hour(t, hs=1.8, tp=12, from_deg=90, speed=2)        # offshore, ideal size and period
+        self.assertAlmostEqual(sc.hour_score(ideal, OFFSHORE), 0.95)
+        self.assertEqual(sc.score_to_stars(sc.hour_score(ideal, OFFSHORE)), 3)
+        self.assertEqual(sc.hour_score(hour(t, hs=4.0, tp=14), OFFSHORE), 0.0)   # too big
+        self.assertEqual(sc.hour_score(hour(t, hs=0.2), OFFSHORE), 0.0)          # flat
+        onshore = hour(t, hs=1.8, tp=12, from_deg=270, speed=8)                  # strong onshore
+        self.assertEqual(sc.score_to_stars(sc.hour_score(onshore, OFFSHORE)), 0)
+        short = hour(t, hs=1.8, tp=7, from_deg=90, speed=2)                      # short period
+        self.assertLess(sc.hour_score(short, OFFSHORE), sc.hour_score(ideal, OFFSHORE))
+
+    def test_predict_day_stars(self):
+        start = datetime(2026, 11, 27, 23, tzinfo=timezone.utc)  # local midnight on the 28th
+        hours = [hour(start + timedelta(hours=k), hs=1.3, tp=12, from_deg=90, speed=3) for k in range(24)]
+        self.assertEqual(sc.predict_day_stars(hours, date(2026, 11, 28), TZ, LAT, LON, OFFSHORE), 3)
+        self.assertIsNone(sc.predict_day_stars(hours, date(2026, 11, 30), TZ, LAT, LON, OFFSHORE))
+
     def test_ics_escaping_and_folding(self):
         line = sc.fold("DESCRIPTION:" + "é" * 100)
         for part in line.split("\r\n"):

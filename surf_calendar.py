@@ -239,6 +239,49 @@ def wind_quality(h: Hour, offshore_heading_rad: float) -> float:
     return 0.8 if bft < 2 else 0.6 if bft < 3 else 0.4 if bft < 4 else 0.2
 
 
+# ---------------------------------------------------------------- hourly score (experimental, not used yet)
+# An hourly rating meant to be consistent with yadusurf's daily stars, which use swell size
+# (optimum 1.5-2 m), swell quality (period, direction) and wind. Swell direction and night wind
+# are not modelled. Calibrated on one week (9 spots x 7 days, 22 Nov 2026): the mean daylight
+# score mapped with STAR_THRESHOLDS matched yadusurf's stars on 51/63 spot-days, all within 1 star.
+
+STAR_THRESHOLDS = (0.05, 0.4, 0.6)  # score needed for 1*, 2*, 3* (provisional, one week of data)
+
+
+def size_score(hs: float) -> float:
+    """0 below 0.3 m, rising to 1 at 1.5 m, 1 up to 2 m, falling to 0 at 3.8 m."""
+    if hs < 0.3:
+        return 0.0
+    if hs < 1.5:
+        return (hs - 0.3) / 1.2
+    if hs <= 2.0:
+        return 1.0
+    return max(0.0, 1 - (hs - 2.0) / 1.8)
+
+
+def period_score(tp: float) -> float:
+    """0.2 at 5 s or less, rising to 1 at 11 s or more."""
+    return min(1.0, max(0.2, (tp - 5) / 6))
+
+
+def hour_score(h: Hour, offshore_heading_rad: float) -> float:
+    """0..1 = size x period x wind quality."""
+    return size_score(h.hs) * period_score(h.tp) * wind_quality(h, offshore_heading_rad)
+
+
+def score_to_stars(score: float) -> int:
+    return sum(score >= t for t in STAR_THRESHOLDS)
+
+
+def predict_day_stars(hours: list[Hour], day: date, tz: ZoneInfo, lat: float, lon: float,
+                      offshore_heading_rad: float) -> int | None:
+    """Daily stars predicted from the mean hourly score over daylight; None if no daylight data."""
+    rise, sset = sun_times(day, lat, lon)
+    scores = [hour_score(h, offshore_heading_rad) for h in hours
+              if h.time.astimezone(tz).date() == day and rise <= h.time <= sset]
+    return score_to_stars(sum(scores) / len(scores)) if scores else None
+
+
 def sun_times(day: date, lat: float, lon: float) -> tuple[datetime, datetime]:
     """Approximate sunrise/sunset in UTC (NOAA simplified, accurate to a few minutes)."""
     n = day.timetuple().tm_yday
