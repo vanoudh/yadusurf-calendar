@@ -47,6 +47,9 @@ No dependencies; Python 3.9+.
    - `https://<your-user>.github.io/yadusurf-calendar/best.ics`: only the best spot at any time
    - `…/all.ics`: every spot in one calendar (best viewed one day at a time)
    - `…/<spot-id>.ics`: a single spot
+   - `…/best_v2.ics`, `…/all_v2.ics`, `…/<spot-id>_v2.ics`: same calendars **without the hours where the tide
+     doesn't suit the spot** (marked ✗); windows are split or dropped accordingly (still ≥ 2 h), and the best
+     spot is chosen among the remaining windows. Hours with unknown tide are kept.
 
 **Best spot**: when windows from several spots overlap, keep the one with the most stars,
 then the average swell closest to 1.5 m (`IDEAL_SWELL_M`), then the longest; overlapping

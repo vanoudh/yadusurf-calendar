@@ -455,8 +455,24 @@ def select_best(events: list[tuple["Spot", Window]]) -> list[tuple["Spot", Windo
     return chosen
 
 
+def drop_bad_tide(windows: list[Window], spot: Spot, tides: list[TideExtreme]) -> list[Window]:
+    """v2 calendars: remove hours marked ✗ for tide; keep the remaining runs of at least
+    MIN_WINDOW_HOURS consecutive hours. Hours with unknown tide are kept."""
+    out = []
+    for w in windows:
+        run: list[Hour] = []
+        for h in w.hours + [None]:
+            if h is not None and tide_mark(h, spot, tides) != "✗":
+                run.append(h)
+                continue
+            if len(run) >= MIN_WINDOW_HOURS:
+                out.append(Window(w.day, run))
+            run = []
+    return out
+
+
 def build_ics(events: list[tuple[Spot, Window]], cal_name: str, tz: ZoneInfo,
-              generated: datetime, tides: list[TideExtreme] | None = None) -> str:
+              generated: datetime, tides: list[TideExtreme] | None = None, uid_suffix: str = "") -> str:
     stamp = generated.strftime("%Y%m%dT%H%M%SZ")
     lines = [
         "BEGIN:VCALENDAR",
@@ -472,7 +488,7 @@ def build_ics(events: list[tuple[Spot, Window]], cal_name: str, tz: ZoneInfo,
     for spot, w in sorted(events, key=lambda e: (e[1].start, e[0].name)):
         lines += [
             "BEGIN:VEVENT",
-            f"UID:{spot.id}-{w.start:%Y%m%dT%H%M}@surf-calendar",
+            f"UID:{spot.id}-{w.start:%Y%m%dT%H%M}{uid_suffix}@surf-calendar",
             f"DTSTAMP:{stamp}",
             f"DTSTART:{w.start:%Y%m%dT%H%M%SZ}",
             f"DTEND:{w.end:%Y%m%dT%H%M%SZ}",
@@ -558,30 +574,36 @@ def main() -> int:
         print("warning: no tide table found on the page", file=sys.stderr)
     print(f"Tides: {len(tides)} high/low tides parsed")
 
+    def show(events):
+        for spot, w in sorted(events, key=lambda e: e[1].start):
+            print(f"   {w.start.astimezone(spot.tz):%a %d %H:%M}-{w.end.astimezone(spot.tz):%H:%M}  "
+                  f"{title(w, spot.name)}")
+
+    # v1: all good-wind windows; v2 (*_v2.ics): same, minus hours where the tide doesn't suit the spot
     all_events: list[tuple[Spot, Window]] = []
+    all_events_v2: list[tuple[Spot, Window]] = []
     for spot, windows in results:
         events = [(spot, w) for w in windows]
+        events_v2 = [(spot, w) for w in drop_bad_tide(windows, spot, tides)]
         all_events += events
+        all_events_v2 += events_v2
         path = os.path.join(args.output_dir, f"{spot.id}.ics")
         write(path, build_ics(events, f"Surf {spot.name}", spot.tz, now, tides))
-
-        print(f"== {spot.name} ({spot.id}): {len(windows)} window(s) -> {path}")
-        for w in windows:
-            print(f"   {w.start.astimezone(spot.tz):%a %d %H:%M}-{w.end.astimezone(spot.tz):%H:%M}  "
-                  f"{title(w, spot.name)}")
+        write(os.path.join(args.output_dir, f"{spot.id}_v2.ics"),
+              build_ics(events_v2, f"Surf {spot.name} v2", spot.tz, now, tides, "-v2"))
+        print(f"== {spot.name} ({spot.id}): {len(events)} window(s), v2 {len(events_v2)} -> {path}")
+        show(events)
 
     if len(args.spot_id) > 1:
-        path = os.path.join(args.output_dir, "all.ics")
-        write(path, build_ics(all_events, "Surf - all spots", tz, now, tides))
-        print(f"\n{len(all_events)} window(s) across {len(args.spot_id)} spots -> {path}")
-
-        best = select_best(all_events)
-        path = os.path.join(args.output_dir, "best.ics")
-        write(path, build_ics(best, "Surf - best spot", tz, now, tides))
-        print(f"\nBest spot: {len(best)} window(s) -> {path}")
-        for spot, w in sorted(best, key=lambda e: e[1].start):
-            print(f"   {w.start.astimezone(spot.tz):%a %d %H:%M}-{w.end.astimezone(spot.tz):%H:%M}  "
-                  f"{title(w, spot.name)}")
+        for suffix, events, uid in (("", all_events, ""), ("_v2", all_events_v2, "-v2")):
+            label = " v2" if suffix else ""
+            write(os.path.join(args.output_dir, f"all{suffix}.ics"),
+                  build_ics(events, f"Surf - all spots{label}", tz, now, tides, uid))
+            best = select_best(events)
+            write(os.path.join(args.output_dir, f"best{suffix}.ics"),
+                  build_ics(best, f"Surf - best spot{label}", tz, now, tides, uid))
+            print(f"\nall{suffix}: {len(events)} window(s); best{suffix}: {len(best)} window(s)")
+            show(best)
     return 0
 
 

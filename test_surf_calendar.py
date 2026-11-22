@@ -134,6 +134,20 @@ class Tests(unittest.TestCase):
         self.assertEqual(sc.predict_day_stars(hours, date(2026, 11, 28), TZ, LAT, LON, OFFSHORE), 3)
         self.assertIsNone(sc.predict_day_stars(hours, date(2026, 11, 30), TZ, LAT, LON, OFFSHORE))
 
+    def test_drop_bad_tide(self):
+        html = 'daysTides[0] = { BM1:"06h 30", HM1:"00h 45", BM2:"19h 04", HM2:"13h 06", Coef:"46", Coef2:"51" };'
+        tides = sc.parse_tides(html, date(2026, 11, 20), TZ)
+        spot = sc.Spot(1, "X", "", TZ, OFFSHORE, {"small": (0.5, 2.5), "large": (0.5, 2.5)})
+        start = datetime(2026, 11, 20, 6, tzinfo=timezone.utc)  # 07:00 Paris, near low tide, rising to high at 13:06
+        w = sc.Window(day(date(2026, 11, 20), 2), [hour(start + timedelta(hours=k)) for k in range(10)])
+        marks = [sc.tide_mark(h, spot, tides) for h in w.hours]
+        kept = sc.drop_bad_tide([w], spot, tides)
+        self.assertIn("✗", marks)
+        self.assertTrue(all(sc.tide_mark(h, spot, tides) == "✓" for k in kept for h in k.hours))
+        self.assertEqual(sum(len(k.hours) for k in kept), marks.count("✓"))
+        # no prefs -> unchanged
+        self.assertEqual(len(sc.drop_bad_tide([w], sc.Spot(1, "X", "", TZ), tides)[0].hours), 10)
+
     def test_ics_escaping_and_folding(self):
         line = sc.fold("DESCRIPTION:" + "é" * 100)
         for part in line.split("\r\n"):
