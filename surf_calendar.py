@@ -14,6 +14,7 @@ Standard library only.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import os
@@ -35,6 +36,8 @@ MIN_WIND_QUALITY = 0.6     # yadusurf colours wind >= 0.6 as good
 MIN_WINDOW_HOURS = 2
 MIN_SWELL_M = 0.5
 IDEAL_SWELL_M = 1.5        # "best spot": prefer swell closest to this
+LARGE_SWELL_M = 1.5        # tide marks: swell >= this uses the "large swell" tide range
+SPOT_TIDES_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spot_tides.csv")
 DELAY_BETWEEN_SPOTS_S = 5  # pause between API calls, to be gentle with the site
 DAWN_MARGIN = timedelta(minutes=30)  # surf from 30 min before sunrise
 
@@ -297,8 +300,31 @@ def tide_text(tides: list[TideExtreme], t: datetime) -> str:
     return f"{arrow}{now:.1f}m".replace(".", ",")
 
 
+def load_tide_prefs(path: str = SPOT_TIDES_CSV) -> dict[int, dict[str, tuple[float, float]]]:
+    """spot_id -> {"small": (min_m, max_m), "large": (min_m, max_m)} from spot_tides.csv; {} if missing."""
+    if not os.path.exists(path):
+        return {}
+    prefs = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            prefs[int(r["spot_id"])] = {
+                size: (float(r[f"{size}_swell_tide_min_m"]), float(r[f"{size}_swell_tide_max_m"]))
+                for size in ("small", "large")
+            }
+    return prefs
+
+
+def tide_mark(h: Hour, spot: Spot, tides: list[TideExtreme]) -> str:
+    """'✓' if the tide suits this spot for this hour's swell size, '✗' if not, '' if unknown."""
+    height = tide_height(tides, h.time)
+    if height is None or not spot.tide_ranges:
+        return ""
+    lo, hi = spot.tide_ranges["large" if h.hs >= LARGE_SWELL_M else "small"]
+    return "✓" if lo <= height <= hi else "✗"
+
+
 def hour_line(h: Hour, spot: Spot, tides: list[TideExtreme]) -> str:
-    """e.g. '14:00 1,5m 11s side 9km/h ↑3,9m'"""
+    """e.g. '14:00 1,5m 11s side 9km/h ↑3,9m ✓'"""
     parts = [
         f"{h.time.astimezone(spot.tz):%H:%M}",
         f"{fmt_num(h.hs)}m",
@@ -306,6 +332,7 @@ def hour_line(h: Hour, spot: Spot, tides: list[TideExtreme]) -> str:
         wind_type(h, spot.offshore_rad),
         f"{round(h.wind_speed * 3.6)}km/h",
         tide_text(tides, h.time),
+        tide_mark(h, spot, tides),
     ]
     return " ".join(p for p in parts if p)
 
@@ -344,6 +371,7 @@ class Spot:
     page_url: str
     tz: ZoneInfo
     offshore_rad: float = 0.0  # compass bearing an offshore wind blows toward
+    tide_ranges: dict[str, tuple[float, float]] | None = None  # from spot_tides.csv
 
 
 def best_score(w: Window) -> tuple:
@@ -396,7 +424,8 @@ def build_ics(events: list[tuple[Spot, Window]], cal_name: str, tz: ZoneInfo,
 
 # ---------------------------------------------------------------- main
 
-def process_spot(spot_id: int, data: dict) -> tuple[Spot, list[Window]]:
+def process_spot(spot_id: int, data: dict,
+                 tide_prefs: dict[int, dict[str, tuple[float, float]]] | None = None) -> tuple[Spot, list[Window]]:
     waw = json.loads(data["WawJson"])
     s = waw["Spot"]
     name = s["Name"].strip()
@@ -406,6 +435,7 @@ def process_spot(spot_id: int, data: dict) -> tuple[Spot, list[Window]]:
         page_url=PAGE_URL.format(slug=name.replace(" ", "-"), spot_id=spot_id),
         tz=ZoneInfo(s.get("TimeZoneIana") or "Europe/Paris"),
         offshore_rad=s["OffshoreWindHeading"]["AngleRad"],
+        tide_ranges=(tide_prefs or {}).get(spot_id),
     )
     days = parse_days(data["SurfometreInfosXml"])
     windows = find_windows(parse_hours(waw), days, spot.tz,
@@ -433,6 +463,7 @@ def main() -> int:
         ap.error("--input works with a single --spot-id")
 
     now = datetime.now(timezone.utc)
+    tide_prefs = load_tide_prefs()
     results: list[tuple[Spot, list[Window]]] = []
     for i, spot_id in enumerate(args.spot_id):
         if args.input:
@@ -442,7 +473,7 @@ def main() -> int:
             if i:
                 time.sleep(DELAY_BETWEEN_SPOTS_S)  # be gentle with yadusurf.com
             data = fetch(spot_id)
-        results.append(process_spot(spot_id, data))
+        results.append(process_spot(spot_id, data, tide_prefs))
 
     # Tide table: one page fetch for all spots (they share the port of Le Boucau).
     # Optional: if it fails, calendars are still published, just without tide heights.

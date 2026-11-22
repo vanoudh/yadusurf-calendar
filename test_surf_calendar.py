@@ -91,6 +91,21 @@ class Tests(unittest.TestCase):
         self.assertRegex(sc.hour_line(hour(falling), spot, tides), r"↓\d,\dm$")
         self.assertRegex(sc.hour_line(h, spot, []), r"km/h$")  # no tide data -> no tide field
 
+    def test_tide_mark(self):
+        html = 'daysTides[0] = { BM1:"06h 30", HM1:"00h 45", BM2:"19h 04", HM2:"13h 06", Coef:"46", Coef2:"51" };'
+        tides = sc.parse_tides(html, date(2026, 11, 20), TZ)
+        spot = sc.Spot(1, "X", "", TZ, OFFSHORE, {"small": (0.5, 1.8), "large": (1.8, 4.6)})
+        low = datetime(2026, 11, 20, 5, 30, tzinfo=timezone.utc)   # 06:30 Paris = low tide (~1.5 m)
+        self.assertTrue(sc.hour_line(hour(low, hs=1.0), spot, tides).endswith(" ✓"))  # small swell, low ok
+        self.assertTrue(sc.hour_line(hour(low, hs=2.0), spot, tides).endswith(" ✗"))  # large swell wants mid-high
+        no_prefs = sc.Spot(1, "X", "", TZ, OFFSHORE)
+        self.assertRegex(sc.hour_line(hour(low), no_prefs, tides), r"m$")  # no mark without prefs
+
+    def test_load_tide_prefs(self):
+        prefs = sc.load_tide_prefs()
+        self.assertEqual(set(prefs), {1280, 1282, 1283, 1284, 1285, 1286, 1289, 1290, 1291})
+        self.assertEqual(prefs[1284]["small"], (0.5, 1.8))
+
     def test_ics_escaping_and_folding(self):
         line = sc.fold("DESCRIPTION:" + "é" * 100)
         for part in line.split("\r\n"):

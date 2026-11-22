@@ -6,7 +6,9 @@ into a subscribable Google Calendar feed of **good surf windows**.
 Events look like `3* Le Penon 1,5m 10s E`:
 stars of the day · spot · avg swell height · avg period · wind direction (where it comes from).
 The description holds the YaDuSurf comment, tide coefficient, water temperature and an hour-by-hour breakdown,
-e.g. `14:00 1,5m 11s side 9km/h ↑3,9m`: time · swell · period · wind type (off / side / on, from the spot's offshore direction) · wind speed · tide.
+e.g. `14:00 1,5m 11s side 9km/h ↑3,9m ✓`: time · swell · period · wind type (off / side / on, from the spot's offshore direction) · wind speed · tide · tide mark.
+
+**Tide mark (✓ / ✗)**: whether the tide suits that spot, from the researched ranges in `spot_tides.csv` (small-swell range below 1.5 m of swell, large-swell range from 1.5 m, `LARGE_SWELL_M`). It is information only: YaDuSurf's stars ignore the tide (their rating uses swell size, period, direction and wind), and the mark does not change which windows are chosen.
 
 **Tide (`↑3,9m`)**: rising (↑) or falling (↓), estimated water height in metres above chart datum (≈1 m = low, ≈4 m = high spring tide).
 YaDuSurf only publishes high/low tide times and coefficients (port of Le Boucau, read from the Le Penon page, so
