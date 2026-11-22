@@ -26,7 +26,7 @@ jobs:
           python-version: "3.12"
       - run: python -m unittest -v
       # one <id>.ics per spot + all.ics + best.ics
-      - run: python surf_calendar.py --spot-id 1280 1282 1283 1286 1289 1290
+      - run: python surf_calendar.py --spot-id 1280 1282 1283 1284 1285 1286 1289 1290 1291
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public

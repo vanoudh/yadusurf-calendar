@@ -50,4 +50,4 @@ windows from other spots are dropped.
 Google re-fetches subscribed calendars on its own schedule (typically every 8–24 h), so the calendar may lag the forecast slightly.
 
 Spots: edit the `--spot-id` list in the workflow (the number at the end of the yadusurf URL).
-Currently: 1280 Le Penon, 1282 Les Estagnots, 1283 Les Culs Nus, 1286 La Sud, 1289 Le Prévent, 1290 Le Santocha.
+Currently: 1280 Le Penon, 1282 Les Estagnots, 1283 Les Culs Nus, 1284 La Gravière, 1285 La Nord, 1286 La Sud, 1289 Le Prévent, 1290 Le Santocha, 1291 La Piste.
