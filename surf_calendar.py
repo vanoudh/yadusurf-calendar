@@ -14,6 +14,7 @@ Standard library only.
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
 import json
 import math
@@ -25,6 +26,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from functools import lru_cache
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -36,7 +38,8 @@ MIN_WIND_QUALITY = 0.6     # yadusurf colours wind >= 0.6 as good
 MIN_WINDOW_HOURS = 2
 MIN_SWELL_M = 0.5
 IDEAL_SWELL_M = 1.5        # "best spot": prefer swell closest to this
-LARGE_SWELL_M = 1.5        # tide marks: swell >= this uses the "large swell" tide range
+TIDE_LOW_MAX_M = 1.8       # avoid rules: tide=low below this height,
+TIDE_HIGH_MIN_M = 3.2      #   tide=high above this, mid in between
 SPOT_TIDES_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spot_tides.csv")
 DELAY_BETWEEN_SPOTS_S = 5  # pause between API calls, to be gentle with the site
 DAWN_MARGIN = timedelta(minutes=30)  # surf from 30 min before sunrise
@@ -365,27 +368,61 @@ def tide_text(tides: list[TideExtreme], t: datetime) -> str:
     return f"{arrow}{now:.1f}m".replace(".", ",")
 
 
-def load_tide_prefs(path: str = SPOT_TIDES_CSV) -> dict[int, dict[str, tuple[float, float]]]:
-    """spot_id -> {"small": (min_m, max_m), "large": (min_m, max_m)} from spot_tides.csv; {} if missing."""
+AVOID_NAMES = {"tide", "swell", "period", "coef", "rising", "low", "mid", "high"}
+_AVOID_NODES = (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.UnaryOp, ast.Not, ast.Compare,
+                ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Name, ast.Load, ast.Constant)
+
+
+@lru_cache(maxsize=None)
+def compile_avoid(expr: str):
+    """Compile an avoid rule such as '(tide=low and swell>2) or swell > 3.5'.
+    Only and/or/not, comparisons (= is equality), numbers and AVOID_NAMES are allowed."""
+    src = re.sub(r"(?<![<>=!])=(?!=)", "==", expr.strip())
+    try:
+        tree = ast.parse(src, mode="eval")
+    except SyntaxError as e:
+        raise ValueError(f"bad avoid rule {expr!r}: {e.msg}") from None
+    for node in ast.walk(tree):
+        if (not isinstance(node, _AVOID_NODES)
+                or isinstance(node, ast.Name) and node.id not in AVOID_NAMES
+                or isinstance(node, ast.Constant) and type(node.value) not in (int, float)):
+            raise ValueError(f"bad avoid rule {expr!r}: {ast.unparse(node)!r} not allowed")
+    return compile(tree, "<avoid>", "eval")
+
+
+def load_avoid_rules(path: str = SPOT_TIDES_CSV) -> dict[int, str]:
+    """spot_id -> avoid rule from spot_tides.csv (validated); {} if the file is missing."""
     if not os.path.exists(path):
         return {}
-    prefs = {}
     with open(path, newline="", encoding="utf-8") as f:
-        for r in csv.DictReader(f):
-            prefs[int(r["spot_id"])] = {
-                size: (float(r[f"{size}_swell_tide_min_m"]), float(r[f"{size}_swell_tide_max_m"]))
-                for size in ("small", "large")
-            }
-    return prefs
+        rules = {int(r["spot_id"]): r["avoid"].strip() for r in csv.DictReader(f)}
+    for expr in rules.values():
+        if expr:
+            compile_avoid(expr)
+    return rules
+
+
+def tide_state(tides: list[TideExtreme], t: datetime) -> tuple[str, bool, int] | None:
+    """(tide class 'low'/'mid'/'high', rising, coefficient of the nearby high tide); None if unknown."""
+    height = tide_height(tides, t)
+    if height is None:
+        return None
+    a, b = next((a, b) for a, b in zip(tides, tides[1:]) if a.time <= t <= b.time)
+    high = a if a.high else b
+    coef = round((high.height - TIDE_MEAN_LEVEL_M) / TIDE_UNIT_M * 100)
+    tide = "low" if height < TIDE_LOW_MAX_M else "high" if height > TIDE_HIGH_MIN_M else "mid"
+    return tide, b.high, coef
 
 
 def tide_mark(h: Hour, spot: Spot, tides: list[TideExtreme]) -> str:
-    """'✓' if the tide suits this spot for this hour's swell size, '✗' if not, '' if unknown."""
-    height = tide_height(tides, h.time)
-    if height is None or not spot.tide_ranges:
+    """'✗' if the spot's avoid rule matches this hour, '✓' if not, '' if no rule or tide unknown."""
+    state = tide_state(tides, h.time) if spot.avoid else None
+    if state is None:
         return ""
-    lo, hi = spot.tide_ranges["large" if h.hs >= LARGE_SWELL_M else "small"]
-    return "✓" if lo <= height <= hi else "✗"
+    tide, rising, coef = state
+    env = {"tide": tide, "swell": h.hs, "period": h.tp, "coef": coef, "rising": rising,
+           "low": "low", "mid": "mid", "high": "high"}
+    return "✗" if eval(compile_avoid(spot.avoid), {"__builtins__": {}}, env) else "✓"
 
 
 def hour_line(h: Hour, spot: Spot, tides: list[TideExtreme]) -> str:
@@ -436,7 +473,7 @@ class Spot:
     page_url: str
     tz: ZoneInfo
     offshore_rad: float = 0.0  # compass bearing an offshore wind blows toward
-    tide_ranges: dict[str, tuple[float, float]] | None = None  # from spot_tides.csv
+    avoid: str = ""  # rule from spot_tides.csv, e.g. "tide=high or swell > 2.5"
 
 
 def best_score(w: Window) -> tuple:
@@ -506,7 +543,7 @@ def build_ics(events: list[tuple[Spot, Window]], cal_name: str, tz: ZoneInfo,
 # ---------------------------------------------------------------- main
 
 def process_spot(spot_id: int, data: dict,
-                 tide_prefs: dict[int, dict[str, tuple[float, float]]] | None = None) -> tuple[Spot, list[Window]]:
+                 avoid_rules: dict[int, str] | None = None) -> tuple[Spot, list[Window]]:
     waw = json.loads(data["WawJson"])
     s = waw["Spot"]
     name = s["Name"].strip()
@@ -516,7 +553,7 @@ def process_spot(spot_id: int, data: dict,
         page_url=PAGE_URL.format(slug=name.replace(" ", "-"), spot_id=spot_id),
         tz=ZoneInfo(s.get("TimeZoneIana") or "Europe/Paris"),
         offshore_rad=s["OffshoreWindHeading"]["AngleRad"],
-        tide_ranges=(tide_prefs or {}).get(spot_id),
+        avoid=(avoid_rules or {}).get(spot_id, ""),
     )
     days = parse_days(data["SurfometreInfosXml"])
     windows = find_windows(parse_hours(waw), days, spot.tz,
@@ -544,7 +581,7 @@ def main() -> int:
         ap.error("--input works with a single --spot-id")
 
     now = datetime.now(timezone.utc)
-    tide_prefs = load_tide_prefs()
+    avoid_rules = load_avoid_rules()
     results: list[tuple[Spot, list[Window]]] = []
     for i, spot_id in enumerate(args.spot_id):
         if args.input:
@@ -554,7 +591,7 @@ def main() -> int:
             if i:
                 time.sleep(DELAY_BETWEEN_SPOTS_S)  # be gentle with yadusurf.com
             data = fetch(spot_id)
-        results.append(process_spot(spot_id, data, tide_prefs))
+        results.append(process_spot(spot_id, data, avoid_rules))
 
     # Tide table: one page fetch for all spots (they share the port of Le Boucau).
     # Optional: if it fails, calendars are still published, just without tide heights.

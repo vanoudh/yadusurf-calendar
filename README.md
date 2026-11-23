@@ -8,7 +8,19 @@ stars of the day · spot · avg swell height · avg period · wind direction (wh
 The description holds the YaDuSurf comment, tide coefficient, water temperature and an hour-by-hour breakdown,
 e.g. `14:00 1,5m 11s side 9km/h ↑3,9m ✓`: time · swell · period · wind type (off / side / on, from the spot's offshore direction) · wind speed · tide · tide mark.
 
-**Tide mark (✓ / ✗)**: whether the tide suits that spot, from the researched ranges in `spot_tides.csv` (small-swell range below 1.5 m of swell, large-swell range from 1.5 m, `LARGE_SWELL_M`). It is information only: YaDuSurf's stars ignore the tide (their rating uses swell size, period, direction and wind), and the mark does not change which windows are chosen.
+**Tide mark (✓ / ✗)**: ✗ when the spot's `avoid` rule in `spot_tides.csv` matches that hour, ✓ otherwise. Rules are
+boolean expressions, e.g. `tide=high or (tide=low and swell>=1.5) or swell > 2.5`, using:
+
+| name | meaning |
+|---|---|
+| `tide` | `low` (< 1,8 m), `mid`, `high` (> 3,2 m) (`TIDE_LOW_MAX_M`, `TIDE_HIGH_MIN_M`) |
+| `swell`, `period` | swell height (m) and period (s) |
+| `coef` | tide coefficient (20–120; ≥ 80 = big) |
+| `rising` | `true` while the tide is rising (`not rising` = falling) |
+
+with `and`, `or`, `not`, parentheses and `= != < <= > >=`. Rules are checked when the script starts, so a typo
+fails the build instead of being ignored. The mark is information only in the normal calendars: YaDuSurf's stars ignore the
+tide (their rating uses swell size, period, direction and wind), and the mark does not change which windows are chosen.
 
 **Tide (`↑3,9m`)**: rising (↑) or falling (↓), estimated water height in metres above chart datum (≈1 m = low, ≈4 m = high spring tide).
 YaDuSurf only publishes high/low tide times and coefficients (port of Le Boucau, read from the Le Penon page, so
@@ -47,8 +59,7 @@ No dependencies; Python 3.9+.
    - `https://<your-user>.github.io/yadusurf-calendar/best.ics`: only the best spot at any time
    - `…/all.ics`: every spot in one calendar (best viewed one day at a time)
    - `…/<spot-id>.ics`: a single spot
-   - `…/best_v2.ics`, `…/all_v2.ics`, `…/<spot-id>_v2.ics`: same calendars **without the hours where the tide
-     doesn't suit the spot** (marked ✗); windows are split or dropped accordingly (still ≥ 2 h), and the best
+   - `…/best_v2.ics`, `…/all_v2.ics`, `…/<spot-id>_v2.ics`: same calendars **without the hours matching the spot's avoid rule** (marked ✗); windows are split or dropped accordingly (still ≥ 2 h), and the best
      spot is chosen among the remaining windows. Hours with unknown tide are kept.
 
 **Best spot**: when windows from several spots overlap, keep the one with the most stars,
