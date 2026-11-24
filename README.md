@@ -9,11 +9,11 @@ The description holds the YaDuSurf comment, tide coefficient, water temperature 
 e.g. `14:00 1,5m 11s side 9km/h ↑3,9m ✓`: time · swell · period · wind type (off / side / on, from the spot's offshore direction) · wind speed · tide · tide mark.
 
 **Tide mark (✓ / ✗)**: ✗ when the spot's `avoid` rule in `spot_tides.csv` matches that hour, ✓ otherwise. Rules are
-boolean expressions, e.g. `height > 3.2 or (height < 1.8 and swell >= 1.5) or swell > 2.5`, using:
+boolean expressions, e.g. `height > 3.2 or (height < 1.5 and swell >= 1.5) or swell > 2.5`, using:
 
 | name | meaning |
 |---|---|
-| `height` | estimated water height (m above chart datum): what the sandbanks actually feel. Rough guide: < 1,8 low, 1,8–3,2 mid, > 3,2 high; a coef-80 high tide ≈ 4,2 m |
+| `height` | estimated water height (m above chart datum): what the sandbanks actually feel. Rough guide: < 1,5 low (≈ 1/5 of hours), > 3,2 high; a coef-80 high tide ≈ 4,2 m |
 | `swell`, `period` | swell height (m) and period (s) |
 | `rising` | `true` while the tide is rising (`not rising` = falling) |
 
