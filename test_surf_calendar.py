@@ -101,10 +101,12 @@ class Tests(unittest.TestCase):
         self.assertTrue(sc.hour_line(hour(low, hs=2.0), spot, tides).endswith(" ✗"))
         self.assertEqual(sc.tide_mark(hour(high, hs=2.0), spot, tides), "✓")
         self.assertEqual(sc.tide_mark(hour(high, hs=3.5), spot, tides), "✗")
-        self.assertEqual(sc.tide_state(tides, low + timedelta(hours=1)), ("low", True, 51))
+        tide, height, rising, coef = sc.tide_state(tides, low + timedelta(hours=1))
+        self.assertEqual((tide, rising, coef), ("low", True, 51))
+        self.assertAlmostEqual(height, sc.tide_height(tides, low + timedelta(hours=1)))
         self.assertEqual(sc.tide_state(tides, high)[0], "high")
-        coef = sc.Spot(1, "X", "", TZ, OFFSHORE, "tide=high and coef>=80")
-        self.assertEqual(sc.tide_mark(hour(high), coef, tides), "✓")  # coef 51 only
+        deep = sc.Spot(1, "X", "", TZ, OFFSHORE, "height > 4.2")
+        self.assertEqual(sc.tide_mark(hour(high), deep, tides), "✓")  # coef 51 high is only ~3,6 m
         no_rule = sc.Spot(1, "X", "", TZ, OFFSHORE)
         self.assertRegex(sc.hour_line(hour(low), no_rule, tides), r"m$")  # no mark without a rule
 

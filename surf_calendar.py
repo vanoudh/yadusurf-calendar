@@ -368,7 +368,7 @@ def tide_text(tides: list[TideExtreme], t: datetime) -> str:
     return f"{arrow}{now:.1f}m".replace(".", ",")
 
 
-AVOID_NAMES = {"tide", "swell", "period", "coef", "rising", "low", "mid", "high"}
+AVOID_NAMES = {"tide", "height", "swell", "period", "coef", "rising", "low", "mid", "high"}
 _AVOID_NODES = (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.UnaryOp, ast.Not, ast.Compare,
                 ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Name, ast.Load, ast.Constant)
 
@@ -402,8 +402,9 @@ def load_avoid_rules(path: str = SPOT_TIDES_CSV) -> dict[int, str]:
     return rules
 
 
-def tide_state(tides: list[TideExtreme], t: datetime) -> tuple[str, bool, int] | None:
-    """(tide class 'low'/'mid'/'high', rising, coefficient of the nearby high tide); None if unknown."""
+def tide_state(tides: list[TideExtreme], t: datetime) -> tuple[str, float, bool, int] | None:
+    """(class 'low'/'mid'/'high' from the absolute height, height in m, rising, coefficient
+    of the nearby high tide); None if unknown."""
     height = tide_height(tides, t)
     if height is None:
         return None
@@ -411,7 +412,7 @@ def tide_state(tides: list[TideExtreme], t: datetime) -> tuple[str, bool, int] |
     high = a if a.high else b
     coef = round((high.height - TIDE_MEAN_LEVEL_M) / TIDE_UNIT_M * 100)
     tide = "low" if height < TIDE_LOW_MAX_M else "high" if height > TIDE_HIGH_MIN_M else "mid"
-    return tide, b.high, coef
+    return tide, height, b.high, coef
 
 
 def tide_mark(h: Hour, spot: Spot, tides: list[TideExtreme]) -> str:
@@ -419,8 +420,8 @@ def tide_mark(h: Hour, spot: Spot, tides: list[TideExtreme]) -> str:
     state = tide_state(tides, h.time) if spot.avoid else None
     if state is None:
         return ""
-    tide, rising, coef = state
-    env = {"tide": tide, "swell": h.hs, "period": h.tp, "coef": coef, "rising": rising,
+    tide, height, rising, coef = state
+    env = {"tide": tide, "height": height, "swell": h.hs, "period": h.tp, "coef": coef, "rising": rising,
            "low": "low", "mid": "mid", "high": "high"}
     return "✗" if eval(compile_avoid(spot.avoid), {"__builtins__": {}}, env) else "✓"
 

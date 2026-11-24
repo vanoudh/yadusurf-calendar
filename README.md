@@ -13,9 +13,10 @@ boolean expressions, e.g. `tide=high or (tide=low and swell>=1.5) or swell > 2.5
 
 | name | meaning |
 |---|---|
-| `tide` | `low` (< 1,8 m), `mid`, `high` (> 3,2 m) (`TIDE_LOW_MAX_M`, `TIDE_HIGH_MIN_M`) |
+| `height` | estimated water height (m above chart datum): what the sandbanks actually feel |
+| `tide` | shorthand for height bands: `low` (< 1,8 m), `mid`, `high` (> 3,2 m) (`TIDE_LOW_MAX_M`, `TIDE_HIGH_MIN_M`) |
 | `swell`, `period` | swell height (m) and period (s) |
-| `coef` | tide coefficient (20–120; ≥ 80 = big) |
+| `coef` | tide coefficient (20–120); usually `height` is the better test: a coef-80 high tide is ≈ 4,2 m |
 | `rising` | `true` while the tide is rising (`not rising` = falling) |
 
 with `and`, `or`, `not`, parentheses and `= != < <= > >=`. Rules are checked when the script starts, so a typo
