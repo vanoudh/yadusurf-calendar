@@ -38,8 +38,6 @@ MIN_WIND_QUALITY = 0.6     # yadusurf colours wind >= 0.6 as good
 MIN_WINDOW_HOURS = 2
 MIN_SWELL_M = 0.5
 IDEAL_SWELL_M = 1.5        # "best spot": prefer swell closest to this
-TIDE_LOW_MAX_M = 1.8       # avoid rules: tide=low below this height,
-TIDE_HIGH_MIN_M = 3.2      #   tide=high above this, mid in between
 SPOT_TIDES_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spot_tides.csv")
 DELAY_BETWEEN_SPOTS_S = 5  # pause between API calls, to be gentle with the site
 DAWN_MARGIN = timedelta(minutes=30)  # surf from 30 min before sunrise
@@ -368,14 +366,14 @@ def tide_text(tides: list[TideExtreme], t: datetime) -> str:
     return f"{arrow}{now:.1f}m".replace(".", ",")
 
 
-AVOID_NAMES = {"tide", "height", "swell", "period", "coef", "rising", "low", "mid", "high"}
+AVOID_NAMES = {"height", "swell", "period", "rising"}
 _AVOID_NODES = (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.UnaryOp, ast.Not, ast.Compare,
                 ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Name, ast.Load, ast.Constant)
 
 
 @lru_cache(maxsize=None)
 def compile_avoid(expr: str):
-    """Compile an avoid rule such as '(tide=low and swell>2) or swell > 3.5'.
+    """Compile an avoid rule such as '(height < 1.8 and swell > 2) or swell > 3.5'.
     Only and/or/not, comparisons (= is equality), numbers and AVOID_NAMES are allowed."""
     src = re.sub(r"(?<![<>=!])=(?!=)", "==", expr.strip())
     try:
@@ -402,17 +400,13 @@ def load_avoid_rules(path: str = SPOT_TIDES_CSV) -> dict[int, str]:
     return rules
 
 
-def tide_state(tides: list[TideExtreme], t: datetime) -> tuple[str, float, bool, int] | None:
-    """(class 'low'/'mid'/'high' from the absolute height, height in m, rising, coefficient
-    of the nearby high tide); None if unknown."""
+def tide_state(tides: list[TideExtreme], t: datetime) -> tuple[float, bool] | None:
+    """(estimated water height in m, rising); None if unknown."""
     height = tide_height(tides, t)
     if height is None:
         return None
-    a, b = next((a, b) for a, b in zip(tides, tides[1:]) if a.time <= t <= b.time)
-    high = a if a.high else b
-    coef = round((high.height - TIDE_MEAN_LEVEL_M) / TIDE_UNIT_M * 100)
-    tide = "low" if height < TIDE_LOW_MAX_M else "high" if height > TIDE_HIGH_MIN_M else "mid"
-    return tide, height, b.high, coef
+    rising = next(b.high for a, b in zip(tides, tides[1:]) if a.time <= t <= b.time)
+    return height, rising
 
 
 def tide_mark(h: Hour, spot: Spot, tides: list[TideExtreme]) -> str:
@@ -420,9 +414,8 @@ def tide_mark(h: Hour, spot: Spot, tides: list[TideExtreme]) -> str:
     state = tide_state(tides, h.time) if spot.avoid else None
     if state is None:
         return ""
-    tide, height, rising, coef = state
-    env = {"tide": tide, "height": height, "swell": h.hs, "period": h.tp, "coef": coef, "rising": rising,
-           "low": "low", "mid": "mid", "high": "high"}
+    height, rising = state
+    env = {"height": height, "swell": h.hs, "period": h.tp, "rising": rising}
     return "✗" if eval(compile_avoid(spot.avoid), {"__builtins__": {}}, env) else "✓"
 
 
@@ -476,7 +469,7 @@ class Spot:
     page_url: str
     tz: ZoneInfo
     offshore_rad: float = 0.0  # compass bearing an offshore wind blows toward
-    avoid: str = ""  # rule from spot_tides.csv, e.g. "tide=high or swell > 2.5"
+    avoid: str = ""  # rule from spot_tides.csv, e.g. "height > 3.2 or swell > 2.5"
 
 
 def best_score(w: Window) -> tuple:

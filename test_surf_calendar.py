@@ -94,17 +94,17 @@ class Tests(unittest.TestCase):
     def test_tide_mark(self):
         html = 'daysTides[0] = { BM1:"06h 30", HM1:"00h 45", BM2:"19h 04", HM2:"13h 06", Coef:"46", Coef2:"51" };'
         tides = sc.parse_tides(html, date(2026, 11, 20), TZ)
-        spot = sc.Spot(1, "X", "", TZ, OFFSHORE, "(tide=low and swell>=1.5) or swell > 3")
+        spot = sc.Spot(1, "X", "", TZ, OFFSHORE, "(height < 1.8 and swell >= 1.5) or swell > 3")
         low = datetime(2026, 11, 20, 5, 30, tzinfo=timezone.utc)   # 06:30 Paris = low tide (~1.5 m)
         high = datetime(2026, 11, 20, 12, 6, tzinfo=timezone.utc)  # 13:06 Paris = high tide
         self.assertTrue(sc.hour_line(hour(low, hs=1.0), spot, tides).endswith(" ✓"))
         self.assertTrue(sc.hour_line(hour(low, hs=2.0), spot, tides).endswith(" ✗"))
         self.assertEqual(sc.tide_mark(hour(high, hs=2.0), spot, tides), "✓")
         self.assertEqual(sc.tide_mark(hour(high, hs=3.5), spot, tides), "✗")
-        tide, height, rising, coef = sc.tide_state(tides, low + timedelta(hours=1))
-        self.assertEqual((tide, rising, coef), ("low", True, 51))
+        height, rising = sc.tide_state(tides, low + timedelta(hours=1))
+        self.assertTrue(rising)
         self.assertAlmostEqual(height, sc.tide_height(tides, low + timedelta(hours=1)))
-        self.assertEqual(sc.tide_state(tides, high)[0], "high")
+        self.assertFalse(sc.tide_state(tides, high + timedelta(hours=1))[1])
         deep = sc.Spot(1, "X", "", TZ, OFFSHORE, "height > 4.2")
         self.assertEqual(sc.tide_mark(hour(high), deep, tides), "✓")  # coef 51 high is only ~3,6 m
         no_rule = sc.Spot(1, "X", "", TZ, OFFSHORE)
@@ -115,14 +115,14 @@ class Tests(unittest.TestCase):
         tides = sc.parse_tides(html, date(2026, 11, 20), TZ)
         t = datetime(2026, 11, 20, 9, tzinfo=timezone.utc)
         w = sc.Window(day(date(2026, 11, 20), 2), [hour(t), hour(t + timedelta(hours=1))])
-        spot = sc.Spot(1, "X", "", TZ, OFFSHORE, "tide=high or swell > 2")
-        self.assertIn("\n✗ = tide=high or swell > 2\n", sc.description(w, spot, tides))
+        spot = sc.Spot(1, "X", "", TZ, OFFSHORE, "height > 3.2 or swell > 2")
+        self.assertIn("\n✗ = height > 3.2 or swell > 2\n", sc.description(w, spot, tides))
         self.assertNotIn("✗ =", sc.description(w, spot, []))  # no tide data -> no marks, no rule
 
     def test_avoid_rules(self):
         rules = sc.load_avoid_rules()
         self.assertEqual(set(rules), {1280, 1282, 1283, 1284, 1285, 1286, 1289, 1290, 1291})
-        for bad in ("__import__('os')", "swell.real > 1", "tide = 'low'", "wind > 3", "swell >"):
+        for bad in ("__import__('os')", "swell.real > 1", "tide = 'low'", "coef > 80", "wind > 3", "swell >"):
             with self.assertRaises(ValueError, msg=bad):
                 sc.compile_avoid(bad)
 
@@ -157,7 +157,7 @@ class Tests(unittest.TestCase):
     def test_drop_bad_tide(self):
         html = 'daysTides[0] = { BM1:"06h 30", HM1:"00h 45", BM2:"19h 04", HM2:"13h 06", Coef:"46", Coef2:"51" };'
         tides = sc.parse_tides(html, date(2026, 11, 20), TZ)
-        spot = sc.Spot(1, "X", "", TZ, OFFSHORE, "tide=high")
+        spot = sc.Spot(1, "X", "", TZ, OFFSHORE, "height > 3.2")
         start = datetime(2026, 11, 20, 6, tzinfo=timezone.utc)  # 07:00 Paris, near low tide, rising to high at 13:06
         w = sc.Window(day(date(2026, 11, 20), 2), [hour(start + timedelta(hours=k)) for k in range(10)])
         marks = [sc.tide_mark(h, spot, tides) for h in w.hours]
