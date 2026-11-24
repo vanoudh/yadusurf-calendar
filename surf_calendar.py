@@ -445,6 +445,8 @@ def description(w: Window, spot: Spot, tides: list[TideExtreme] | None = None) -
     lines.append(f"Coef marée: {w.day.coefficient} · Eau: {w.day.water_temp}°C")
     lines.append("")
     lines += [hour_line(h, spot, tides or []) for h in w.hours]
+    if spot.avoid and tides:
+        lines.append(f"✗ = {spot.avoid}")
     lines += ["", spot.page_url]
     return "\n".join(lines)
 

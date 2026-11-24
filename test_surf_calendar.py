@@ -110,6 +110,15 @@ class Tests(unittest.TestCase):
         no_rule = sc.Spot(1, "X", "", TZ, OFFSHORE)
         self.assertRegex(sc.hour_line(hour(low), no_rule, tides), r"m$")  # no mark without a rule
 
+    def test_description_shows_avoid_rule(self):
+        html = 'daysTides[0] = { BM1:"06h 30", HM1:"00h 45", BM2:"19h 04", HM2:"13h 06", Coef:"46", Coef2:"51" };'
+        tides = sc.parse_tides(html, date(2026, 11, 20), TZ)
+        t = datetime(2026, 11, 20, 9, tzinfo=timezone.utc)
+        w = sc.Window(day(date(2026, 11, 20), 2), [hour(t), hour(t + timedelta(hours=1))])
+        spot = sc.Spot(1, "X", "", TZ, OFFSHORE, "tide=high or swell > 2")
+        self.assertIn("\n✗ = tide=high or swell > 2\n", sc.description(w, spot, tides))
+        self.assertNotIn("✗ =", sc.description(w, spot, []))  # no tide data -> no marks, no rule
+
     def test_avoid_rules(self):
         rules = sc.load_avoid_rules()
         self.assertEqual(set(rules), {1280, 1282, 1283, 1284, 1285, 1286, 1289, 1290, 1291})

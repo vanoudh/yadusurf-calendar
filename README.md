@@ -19,7 +19,7 @@ boolean expressions, e.g. `tide=high or (tide=low and swell>=1.5) or swell > 2.5
 | `coef` | tide coefficient (20–120); usually `height` is the better test: a coef-80 high tide is ≈ 4,2 m |
 | `rising` | `true` while the tide is rising (`not rising` = falling) |
 
-with `and`, `or`, `not`, parentheses and `= != < <= > >=`. Rules are checked when the script starts, so a typo
+with `and`, `or`, `not`, parentheses and `= != < <= > >=`. The rule is shown under the hourly lines (`✗ = …`). Rules are checked when the script starts, so a typo
 fails the build instead of being ignored. The mark is information only in the normal calendars: YaDuSurf's stars ignore the
 tide (their rating uses swell size, period, direction and wind), and the mark does not change which windows are chosen.
 
