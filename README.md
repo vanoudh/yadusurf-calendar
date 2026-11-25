@@ -15,7 +15,7 @@ boolean expressions, e.g. `height > 3.2 or (height < 1.5 and swell >= 1.5) or sw
 |---|---|
 | `height` | estimated water height (m above chart datum): what the sandbanks actually feel. Rough guide: < 1,5 low (≈ 1/5 of hours), > 3,2 high; a coef-80 high tide ≈ 4,2 m |
 | `swell`, `period` | swell height (m) and period (s) |
-| `rising` | `true` while the tide is rising (`not rising` = falling) |
+| `rising` | the tide is rising (same as the ↑ arrow); write `rising` or `not rising`, not `rising = true` |
 
 with `and`, `or`, `not`, parentheses and `= != < <= > >=`. The rule is shown under the hourly lines (`✗ = …`). Rules are checked when the script starts, so a typo
 fails the build instead of being ignored. The mark is information only in the normal calendars: YaDuSurf's stars ignore the

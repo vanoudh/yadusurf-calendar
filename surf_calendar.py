@@ -358,12 +358,11 @@ def title(w: Window, spot_name: str) -> str:
 
 def tide_text(tides: list[TideExtreme], t: datetime) -> str:
     """e.g. '↑3,9m' (rising) / '↓3,7m' (falling); '' when unknown."""
-    now = tide_height(tides, t)
-    later = tide_height(tides, t + timedelta(minutes=10))
-    if now is None:
+    state = tide_state(tides, t)
+    if state is None:
         return ""
-    arrow = "" if later is None else "↑" if later > now else "↓"
-    return f"{arrow}{now:.1f}m".replace(".", ",")
+    height, rising = state
+    return f"{'↑' if rising else '↓'}{height:.1f}m".replace(".", ",")
 
 
 AVOID_NAMES = {"height", "swell", "period", "rising"}
@@ -373,7 +372,7 @@ _AVOID_NODES = (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.UnaryOp, ast.No
 
 @lru_cache(maxsize=None)
 def compile_avoid(expr: str):
-    """Compile an avoid rule such as '(height < 1.8 and swell > 2) or swell > 3.5'.
+    """Compile an avoid rule such as '(height < 1.5 and swell > 2) or swell > 3.5'.
     Only and/or/not, comparisons (= is equality), numbers and AVOID_NAMES are allowed."""
     src = re.sub(r"(?<![<>=!])=(?!=)", "==", expr.strip())
     try:
@@ -401,12 +400,15 @@ def load_avoid_rules(path: str = SPOT_TIDES_CSV) -> dict[int, str]:
 
 
 def tide_state(tides: list[TideExtreme], t: datetime) -> tuple[float, bool] | None:
-    """(estimated water height in m, rising); None if unknown."""
+    """(estimated water height in m, rising); None if unknown.
+    Rising = higher 10 min later, so at the exact time of a high tide it is already falling."""
     height = tide_height(tides, t)
     if height is None:
         return None
-    rising = next(b.high for a, b in zip(tides, tides[1:]) if a.time <= t <= b.time)
-    return height, rising
+    later = tide_height(tides, t + timedelta(minutes=10))
+    if later is None:  # within 10 min of the last known tide: rising if heading to a high
+        later = height + (1 if tides[-1].high else -1)
+    return height, later > height
 
 
 def tide_mark(h: Hour, spot: Spot, tides: list[TideExtreme]) -> str:

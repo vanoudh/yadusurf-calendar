@@ -105,6 +105,10 @@ class Tests(unittest.TestCase):
         self.assertTrue(rising)
         self.assertAlmostEqual(height, sc.tide_height(tides, low + timedelta(hours=1)))
         self.assertFalse(sc.tide_state(tides, high + timedelta(hours=1))[1])
+        self.assertFalse(sc.tide_state(tides, high)[1])  # exactly at high tide: falling, like the arrow
+        self.assertTrue(sc.tide_text(tides, high).startswith("↓"))
+        last = tides[-1]  # 19:04 low: just before it the tide is still falling
+        self.assertFalse(sc.tide_state(tides, last.time - timedelta(minutes=5))[1])
         deep = sc.Spot(1, "X", "", TZ, OFFSHORE, "height > 4.2")
         self.assertEqual(sc.tide_mark(hour(high), deep, tides), "✓")  # coef 51 high is only ~3,6 m
         no_rule = sc.Spot(1, "X", "", TZ, OFFSHORE)
