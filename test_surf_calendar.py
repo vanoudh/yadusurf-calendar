@@ -1,5 +1,8 @@
+import io
 import math
 import unittest
+import urllib.error
+from unittest import mock
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -109,6 +112,10 @@ class Tests(unittest.TestCase):
         self.assertTrue(sc.tide_text(tides, high).startswith("↓"))
         last = tides[-1]  # 19:04 low: just before it the tide is still falling
         self.assertFalse(sc.tide_state(tides, last.time - timedelta(minutes=5))[1])
+        self.assertTrue(sc.tide_state(tides, last.time)[1])  # exactly at the last low: rising
+        last_high = tides[:3][-1]  # table ending on the 13:06 high
+        self.assertTrue(last_high.high)
+        self.assertFalse(sc.tide_state(tides[:3], last_high.time)[1])  # exactly at high: falling
         deep = sc.Spot(1, "X", "", TZ, OFFSHORE, "height > 4.2")
         self.assertEqual(sc.tide_mark(hour(high), deep, tides), "✓")  # coef 51 high is only ~3,6 m
         no_rule = sc.Spot(1, "X", "", TZ, OFFSHORE)
@@ -171,6 +178,22 @@ class Tests(unittest.TestCase):
         self.assertEqual(sum(len(k.hours) for k in kept), marks.count("✓"))
         # no prefs -> unchanged
         self.assertEqual(len(sc.drop_bad_tide([w], sc.Spot(1, "X", "", TZ), tides)[0].hours), 10)
+
+    def test_get_does_not_retry_client_errors(self):
+        err = urllib.error.HTTPError("u", 403, "Forbidden", {}, io.BytesIO())
+        with mock.patch("urllib.request.urlopen", side_effect=err) as urlopen, \
+                mock.patch("time.sleep") as sleep:
+            with self.assertRaises(urllib.error.HTTPError):
+                sc.get("https://example.com/x")
+        self.assertEqual(urlopen.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_page_url_is_percent_encoded(self):
+        data = {"WawJson": '{"Spot": {"Name": "La Gravière", "OffshoreWindHeading": {"AngleRad": 0},'
+                           ' "Position": {"Latitude": 43.7, "Longitude": -1.4}}, "_WAWDays": []}',
+                "SurfometreInfosXml": "<Days/>"}
+        spot, _ = sc.process_spot(1284, data)
+        self.assertEqual(spot.page_url, "https://www.yadusurf.com/Meteo-Surf-Report/La-Gravi%C3%A8re/1284")
 
     def test_ics_escaping_and_folding(self):
         line = sc.fold("DESCRIPTION:" + "é" * 100)

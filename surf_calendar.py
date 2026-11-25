@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -98,17 +99,19 @@ class Window:
 # ---------------------------------------------------------------- fetch/parse
 
 def get(url: str, attempts: int = 2) -> str:
-    """GET with one gentle retry. If every attempt fails the exception propagates."""
+    """GET with one gentle retry (not for 4xx errors, which won't change by retrying).
+    If every attempt fails the exception propagates."""
     req = urllib.request.Request(
-        urllib.parse.quote(url, safe=":/?=&"),
+        urllib.parse.quote(url, safe=":/?=&%"),
         headers={"User-Agent": "Mozilla/5.0 (surf-calendar)"},
     )
     for attempt in range(1, attempts + 1):
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 return resp.read().decode("utf-8")
-        except OSError as e:  # URLError, timeouts
-            if attempt == attempts:
+        except OSError as e:  # URLError, HTTPError, timeouts
+            permanent = isinstance(e, urllib.error.HTTPError) and e.code < 500
+            if attempt == attempts or permanent:
                 raise
             print(f"   {url}: attempt {attempt} failed ({e}), retrying...", file=sys.stderr)
             time.sleep(30)
@@ -406,9 +409,11 @@ def tide_state(tides: list[TideExtreme], t: datetime) -> tuple[float, bool] | No
     if height is None:
         return None
     later = tide_height(tides, t + timedelta(minutes=10))
-    if later is None:  # within 10 min of the last known tide: rising if heading to a high
-        later = height + (1 if tides[-1].high else -1)
-    return height, later > height
+    if later is not None:
+        return height, later > height
+    # 10 min later is unknown (end of the table, or a gap after the next tide): use the next tide
+    nxt = next(e for e in tides if e.time >= t)  # exists, since height is known
+    return height, (not nxt.high) if nxt.time == t else nxt.high
 
 
 def tide_mark(h: Hour, spot: Spot, tides: list[TideExtreme]) -> str:
@@ -548,7 +553,7 @@ def process_spot(spot_id: int, data: dict,
     spot = Spot(
         id=spot_id,
         name=name,
-        page_url=PAGE_URL.format(slug=name.replace(" ", "-"), spot_id=spot_id),
+        page_url=PAGE_URL.format(slug=urllib.parse.quote(name.replace(" ", "-")), spot_id=spot_id),
         tz=ZoneInfo(s.get("TimeZoneIana") or "Europe/Paris"),
         offshore_rad=s["OffshoreWindHeading"]["AngleRad"],
         avoid=(avoid_rules or {}).get(spot_id, ""),
@@ -602,8 +607,8 @@ def main() -> int:
         time.sleep(DELAY_BETWEEN_SPOTS_S)
         try:
             html = get(results[0][0].page_url)
-        except OSError as e:
-            print(f"warning: tide page unavailable ({e}), no tide heights", file=sys.stderr)
+        except Exception as e:  # network, truncated body, bad encoding...: tides are optional
+            print(f"warning: tide page unavailable ({e!r}), no tide heights", file=sys.stderr)
     tides = parse_tides(html, now.astimezone(tz).date(), tz) if html else []
     if html and not tides:
         print("warning: no tide table found on the page", file=sys.stderr)
