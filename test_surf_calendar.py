@@ -49,19 +49,34 @@ class Tests(unittest.TestCase):
         self.assertEqual(w.start.astimezone(TZ).hour, 8)   # sunrise ~8:05, 30 min margin
         self.assertEqual(w.end.astimezone(TZ).hour, 14)    # wind turns onshore at 14h
 
-    def test_select_best_one_spot_at_a_time(self):
-        t = datetime(2026, 11, 21, 8, tzinfo=timezone.utc)
-        d = date(2026, 11, 21)
-        spot = lambda i: sc.Spot(i, f"S{i}", "", TZ)
+    def test_select_best_hour_by_hour(self):
+        t = datetime(2026, 12, 1, 7, tzinfo=timezone.utc)  # 08:00 Paris
+        d = date(2026, 12, 1)
+        spot = lambda i, ideal=1.5: sc.Spot(i, f"S{i}", "", TZ, ideal_swell=ideal)
         win = lambda stars, hs, start, n: sc.Window(
-            day(d, stars), [hour(start + timedelta(hours=k), hs) for k in range(n)])
-        a = (spot(1), win(2, 1.5, t, 4))                       # 2*, ideal swell
-        b = (spot(2), win(3, 2.5, t + timedelta(hours=1), 4))  # 3*, overlaps a -> wins
-        c = (spot(3), win(2, 1.4, t + timedelta(hours=1), 2))  # overlaps b -> dropped
-        e = (spot(4), win(1, 1.5, t + timedelta(hours=6), 2))  # no overlap -> kept
-        f = (spot(5), win(1, 2.8, t + timedelta(hours=6), 2))  # same slot, worse swell
-        best = sc.select_best([a, b, c, e, f])
-        self.assertEqual(sorted(s.id for s, _ in best), [2, 4])
+            day(d, stars), [hour(t + timedelta(hours=start + k), hs) for k in range(n)])
+        local = lambda ev: [(s.id, w.start.astimezone(TZ).hour, w.end.astimezone(TZ).hour) for s, w in ev]
+
+        # Tuesday 1 Dec: a short big-swell window no longer wipes out a long one
+        penon = (spot(1280), win(3, 1.4, 0, 10))          # 08-18, 1.4 m vs ideal 1.5
+        nord = (spot(1285, 2.0), win(3, 1.5, 8, 2))       # 16-18, 1.5 m vs ideal 2.0
+        self.assertEqual(local(sc.select_best([penon, nord])), [(1280, 8, 18)])
+
+        # more stars wins only the hours it covers; the other spot keeps the rest
+        a = (spot(1), win(2, 1.5, 0, 10))
+        b = (spot(2), win(3, 2.0, 4, 3))                  # 12-15
+        self.assertEqual(local(sc.select_best([a, b])), [(1, 8, 12), (2, 12, 15), (1, 15, 18)])
+
+        # same stars: stay on the current spot unless another is clearly (>= 0.2 m) closer to ideal
+        a = (spot(1), win(2, 1.7, 0, 6))                  # 0.2 m off ideal
+        c = (spot(3), win(2, 1.6, 2, 4))                  # 0.1 m off: not enough to switch
+        self.assertEqual(local(sc.select_best([a, c])), [(1, 8, 14)])
+        e = (spot(4), win(2, 1.5, 2, 4))                  # 0.0 m off: switch
+        self.assertEqual(local(sc.select_best([a, e])), [(1, 8, 10), (4, 10, 14)])
+
+        # a leftover run shorter than MIN_WINDOW_HOURS is dropped
+        f = (spot(5), win(2, 1.5, 1, 5))                  # 09-14 takes over a at 09:00
+        self.assertEqual(local(sc.select_best([a, f])), [(5, 9, 14)])
 
     def test_tides(self):
         html = ('var daysTides = new Array();\n'
@@ -130,9 +145,12 @@ class Tests(unittest.TestCase):
         self.assertIn("\n✗ = height > 3.2 or swell > 2\n", sc.description(w, spot, tides))
         self.assertNotIn("✗ =", sc.description(w, spot, []))  # no tide data -> no marks, no rule
 
-    def test_avoid_rules(self):
-        rules = sc.load_avoid_rules()
-        self.assertEqual(set(rules), {1280, 1282, 1283, 1284, 1285, 1286, 1289, 1290, 1291})
+    def test_spot_config(self):
+        config = sc.load_spot_config()
+        self.assertEqual(set(config), {1280, 1282, 1283, 1284, 1285, 1286, 1289, 1290, 1291})
+        self.assertEqual(config[1285]["ideal_swell"], 2.0)  # La Nord: big-swell spot
+        self.assertEqual(config[1280]["ideal_swell"], 1.5)
+        self.assertTrue(all(c["avoid"] for c in config.values()))
         for bad in ("__import__('os')", "swell.real > 1", "tide = 'low'", "coef > 80", "wind > 3", "swell >"):
             with self.assertRaises(ValueError, msg=bad):
                 sc.compile_avoid(bad)

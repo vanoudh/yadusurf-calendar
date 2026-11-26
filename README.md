@@ -8,7 +8,7 @@ stars of the day · spot · avg swell height · avg period · wind direction (wh
 The description holds the YaDuSurf comment, tide coefficient, water temperature and an hour-by-hour breakdown,
 e.g. `14:00 1,5m 11s side 9km/h ↑3,9m ✓`: time · swell · period · wind type (off / side / on, from the spot's offshore direction) · wind speed · tide · tide mark.
 
-**Tide mark (✓ / ✗)**: ✗ when the spot's `avoid` rule in `spot_tides.csv` matches that hour, ✓ otherwise. Rules are
+**Tide mark (✓ / ✗)**: ✗ when the spot's `avoid` rule in `spots.csv` matches that hour, ✓ otherwise. Rules are
 boolean expressions, e.g. `height > 3.2 or (height < 1.5 and swell >= 1.5) or swell > 2.5`, using:
 
 | name | meaning |
@@ -61,9 +61,12 @@ No dependencies; Python 3.9+.
    - `…/best_v2.ics`, `…/all_v2.ics`, `…/<spot-id>_v2.ics`: same calendars **without the hours matching the spot's avoid rule** (marked ✗); windows are split or dropped accordingly (still ≥ 2 h), and the best
      spot is chosen among the remaining windows. Hours with unknown tide are kept.
 
-**Best spot**: when windows from several spots overlap, keep the one with the most stars,
-then the average swell closest to 1.5 m (`IDEAL_SWELL_M`), then the longest; overlapping
-windows from other spots are dropped.
+**Best spot**: chosen **hour by hour** among the spots with a window at that hour: the most stars,
+then the swell closest to that spot's `ideal_swell` (in `spots.csv`; 1.5 m by default, 2 m for La Nord).
+To avoid flip-flopping, the current spot is kept unless another has more stars or a swell at least
+0.2 m closer to its ideal (`SWITCH_MARGIN_M`). Consecutive hours of a spot become one event (≥ 2 h).
+
+**`spots.csv`**: one row per spot: `avoid` rule, `ideal_swell` (m), plus the research notes and sources behind them.
 
 Google re-fetches subscribed calendars on its own schedule (typically every 8–24 h), so the calendar may lag the forecast slightly.
 

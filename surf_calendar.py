@@ -38,8 +38,9 @@ MIN_STARS = 1
 MIN_WIND_QUALITY = 0.6     # yadusurf colours wind >= 0.6 as good
 MIN_WINDOW_HOURS = 2
 MIN_SWELL_M = 0.5
-IDEAL_SWELL_M = 1.5        # "best spot": prefer swell closest to this
-SPOT_TIDES_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spot_tides.csv")
+IDEAL_SWELL_M = 1.5        # "best spot": default ideal swell, overridden per spot in spots.csv
+SWITCH_MARGIN_M = 0.2      # "best spot": with equal stars, switch spot only if its swell is this much closer to ideal
+SPOTS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spots.csv")
 DELAY_BETWEEN_SPOTS_S = 5  # pause between API calls, to be gentle with the site
 DAWN_MARGIN = timedelta(minutes=30)  # surf from 30 min before sunrise
 
@@ -390,16 +391,21 @@ def compile_avoid(expr: str):
     return compile(tree, "<avoid>", "eval")
 
 
-def load_avoid_rules(path: str = SPOT_TIDES_CSV) -> dict[int, str]:
-    """spot_id -> avoid rule from spot_tides.csv (validated); {} if the file is missing."""
+def load_spot_config(path: str = SPOTS_CSV) -> dict[int, dict]:
+    """spot_id -> {"avoid": rule (validated), "ideal_swell": m} from spots.csv; {} if the file is missing."""
     if not os.path.exists(path):
         return {}
+    config = {}
     with open(path, newline="", encoding="utf-8") as f:
-        rules = {int(r["spot_id"]): r["avoid"].strip() for r in csv.DictReader(f)}
-    for expr in rules.values():
-        if expr:
-            compile_avoid(expr)
-    return rules
+        for r in csv.DictReader(f):
+            avoid = (r.get("avoid") or "").strip()
+            if avoid:
+                compile_avoid(avoid)
+            config[int(r["spot_id"])] = {
+                "avoid": avoid,
+                "ideal_swell": float(r.get("ideal_swell") or IDEAL_SWELL_M),
+            }
+    return config
 
 
 def tide_state(tides: list[TideExtreme], t: datetime) -> tuple[float, bool] | None:
@@ -476,22 +482,45 @@ class Spot:
     page_url: str
     tz: ZoneInfo
     offshore_rad: float = 0.0  # compass bearing an offshore wind blows toward
-    avoid: str = ""  # rule from spot_tides.csv, e.g. "height > 3.2 or swell > 2.5"
+    avoid: str = ""  # rule from spots.csv, e.g. "height > 3.2 or swell > 2.5"
+    ideal_swell: float = IDEAL_SWELL_M  # from spots.csv, used to pick the best spot
 
 
-def best_score(w: Window) -> tuple:
-    """Sort key, lower is better: more stars, then swell closer to IDEAL_SWELL_M, then longer."""
-    hs = sum(h.hs for h in w.hours) / len(w.hours)
-    return (-w.day.stars, round(abs(hs - IDEAL_SWELL_M), 1), -len(w.hours))
+def select_best(events: list[tuple[Spot, Window]]) -> list[tuple[Spot, Window]]:
+    """One spot at a time, chosen hour by hour among the windows covering that hour:
+    most stars, then swell closest to the spot's ideal_swell. To avoid flip-flopping, the
+    previous hour's spot is kept unless another has more stars or a swell at least
+    SWITCH_MARGIN_M closer to its ideal. Consecutive hours of the same window become one
+    event; runs shorter than MIN_WINDOW_HOURS are dropped."""
+    by_time: dict[datetime, list[tuple[Spot, Window, Hour]]] = {}
+    for spot, w in events:
+        for h in w.hours:
+            by_time.setdefault(h.time, []).append((spot, w, h))
 
+    def rank(c: tuple[Spot, Window, Hour]) -> tuple:
+        spot, w, h = c
+        return (-w.day.stars, abs(h.hs - spot.ideal_swell), spot.id)
 
-def select_best(events: list[tuple["Spot", Window]]) -> list[tuple["Spot", Window]]:
-    """Keep only one spot at any given time: greedily take the best-scored window,
-    drop every window overlapping it, repeat."""
+    picks: list[tuple[Spot, Window, Hour]] = []
+    for t in sorted(by_time):
+        cands = sorted(by_time[t], key=rank)
+        pick = cands[0]
+        if picks and picks[-1][2].time == t - timedelta(hours=1):
+            prev = next((c for c in cands if c[1] is picks[-1][1]), None)
+            if (prev and prev[1].day.stars == pick[1].day.stars
+                    and round(rank(prev)[1] - rank(pick)[1], 2) < SWITCH_MARGIN_M):
+                pick = prev
+        picks.append(pick)
+
     chosen: list[tuple[Spot, Window]] = []
-    for spot, w in sorted(events, key=lambda e: (best_score(e[1]), e[0].id)):
-        if all(w.end <= c.start or w.start >= c.end for _, c in chosen):
-            chosen.append((spot, w))
+    run: list[tuple[Spot, Window, Hour]] = []
+    for c in picks + [None]:
+        if c and run and c[1] is run[-1][1] and c[2].time - run[-1][2].time == timedelta(hours=1):
+            run.append(c)
+            continue
+        if len(run) >= MIN_WINDOW_HOURS:
+            chosen.append((run[0][0], Window(run[0][1].day, [h for _, _, h in run])))
+        run = [c] if c else []
     return chosen
 
 
@@ -546,7 +575,7 @@ def build_ics(events: list[tuple[Spot, Window]], cal_name: str, tz: ZoneInfo,
 # ---------------------------------------------------------------- main
 
 def process_spot(spot_id: int, data: dict,
-                 avoid_rules: dict[int, str] | None = None) -> tuple[Spot, list[Window]]:
+                 config: dict[int, dict] | None = None) -> tuple[Spot, list[Window]]:
     waw = json.loads(data["WawJson"])
     s = waw["Spot"]
     name = s["Name"].strip()
@@ -556,7 +585,8 @@ def process_spot(spot_id: int, data: dict,
         page_url=PAGE_URL.format(slug=urllib.parse.quote(name.replace(" ", "-")), spot_id=spot_id),
         tz=ZoneInfo(s.get("TimeZoneIana") or "Europe/Paris"),
         offshore_rad=s["OffshoreWindHeading"]["AngleRad"],
-        avoid=(avoid_rules or {}).get(spot_id, ""),
+        avoid=(config or {}).get(spot_id, {}).get("avoid", ""),
+        ideal_swell=(config or {}).get(spot_id, {}).get("ideal_swell", IDEAL_SWELL_M),
     )
     days = parse_days(data["SurfometreInfosXml"])
     windows = find_windows(parse_hours(waw), days, spot.tz,
@@ -584,7 +614,7 @@ def main() -> int:
         ap.error("--input works with a single --spot-id")
 
     now = datetime.now(timezone.utc)
-    avoid_rules = load_avoid_rules()
+    config = load_spot_config()
     results: list[tuple[Spot, list[Window]]] = []
     for i, spot_id in enumerate(args.spot_id):
         if args.input:
@@ -594,7 +624,7 @@ def main() -> int:
             if i:
                 time.sleep(DELAY_BETWEEN_SPOTS_S)  # be gentle with yadusurf.com
             data = fetch(spot_id)
-        results.append(process_spot(spot_id, data, avoid_rules))
+        results.append(process_spot(spot_id, data, config))
 
     # Tide table: one page fetch for all spots (they share the port of Le Boucau).
     # Optional: if it fails, calendars are still published, just without tide heights.
