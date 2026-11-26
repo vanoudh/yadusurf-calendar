@@ -62,7 +62,7 @@ No dependencies; Python 3.9+.
      spot is chosen among the remaining windows. Hours with unknown tide are kept.
 
 **Best spot**: chosen **hour by hour** among the spots with a window at that hour: the most stars,
-then the swell closest to that spot's `ideal_swell` (in `spots.csv`; 1.5 m by default, 2 m for La Nord).
+then the swell closest to that spot's `ideal_swell` (in `spots.csv`; 1.5 m by default, 3 m for La Nord).
 To avoid flip-flopping, the current spot is kept unless another has more stars or a swell at least
 0.2 m closer to its ideal (`SWITCH_MARGIN_M`). Consecutive hours of a spot become one event (≥ 2 h).
 
@@ -71,4 +71,4 @@ To avoid flip-flopping, the current spot is kept unless another has more stars o
 Google re-fetches subscribed calendars on its own schedule (typically every 8–24 h), so the calendar may lag the forecast slightly.
 
 Spots: edit the `--spot-id` list in the workflow (the number at the end of the yadusurf URL).
-Currently: 1280 Le Penon, 1282 Les Estagnots, 1283 Les Culs Nus, 1284 La Gravière, 1285 La Nord, 1286 La Sud, 1289 Le Prévent, 1290 Le Santocha, 1291 La Piste.
+Currently: 1280 Le Penon, 1282 Les Estagnots, 1283 Les Culs Nus, 1284 La Gravière, 1286 La Sud, 1289 Le Prévent, 1290 Le Santocha, 1291 La Piste.

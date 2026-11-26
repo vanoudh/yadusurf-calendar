@@ -59,7 +59,7 @@ class Tests(unittest.TestCase):
 
         # Tuesday 1 Dec: a short big-swell window no longer wipes out a long one
         penon = (spot(1280), win(3, 1.4, 0, 10))          # 08-18, 1.4 m vs ideal 1.5
-        nord = (spot(1285, 2.0), win(3, 1.5, 8, 2))       # 16-18, 1.5 m vs ideal 2.0
+        nord = (spot(1285, 3.0), win(3, 1.5, 8, 2))       # 16-18, 1.5 m vs ideal 3.0
         self.assertEqual(local(sc.select_best([penon, nord])), [(1280, 8, 18)])
 
         # more stars wins only the hours it covers; the other spot keeps the rest
@@ -148,7 +148,7 @@ class Tests(unittest.TestCase):
     def test_spot_config(self):
         config = sc.load_spot_config()
         self.assertEqual(set(config), {1280, 1282, 1283, 1284, 1285, 1286, 1289, 1290, 1291})
-        self.assertEqual(config[1285]["ideal_swell"], 2.0)  # La Nord: big-swell spot
+        self.assertEqual(config[1285]["ideal_swell"], 3.0)  # La Nord: big-swell spot (not in the workflow for now)
         self.assertEqual(config[1280]["ideal_swell"], 1.5)
         self.assertTrue(all(c["avoid"] for c in config.values()))
         for bad in ("__import__('os')", "swell.real > 1", "tide = 'low'", "coef > 80", "wind > 3", "swell >"):
